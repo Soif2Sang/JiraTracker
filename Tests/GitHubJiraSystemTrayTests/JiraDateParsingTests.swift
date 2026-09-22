@@ -19,7 +19,8 @@ struct JiraDateParsingTests {
             status: nil,
             priority: nil,
             issueType: nil,
-            updated: "2024-05-06T13:44:22.000+0200"
+            updated: "2024-05-06T13:44:22.000+0200",
+            codeReviewer: nil
         )
 
         #expect(fields.updatedDate != nil)

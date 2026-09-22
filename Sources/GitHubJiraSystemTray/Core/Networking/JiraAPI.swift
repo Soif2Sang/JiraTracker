@@ -27,6 +27,9 @@ enum JiraAPIError: LocalizedError {
 }
 
 final class JiraClient {
+    /// Custom field id of "Code Reviewer" on the Atlassian site.
+    static let codeReviewerField = "customfield_11268"
+
     private let baseURL: URL
     private let email: String
     private let token: String
@@ -47,7 +50,7 @@ final class JiraClient {
             var queryItems = [
                 URLQueryItem(name: "jql", value: jql),
                 URLQueryItem(name: "maxResults", value: "100"),
-                URLQueryItem(name: "fields", value: "summary,status,priority,issuetype,updated")
+                URLQueryItem(name: "fields", value: "summary,status,priority,issuetype,updated,\(Self.codeReviewerField)")
             ]
             if let nextPageToken {
                 queryItems.append(URLQueryItem(name: "nextPageToken", value: nextPageToken))
@@ -70,8 +73,27 @@ final class JiraClient {
     func issue(key: String) async throws -> JiraIssue {
         try await request(
             path: "/rest/api/3/issue/\(key)",
-            queryItems: [URLQueryItem(name: "fields", value: "summary,status,priority,issuetype,updated")]
+            queryItems: [URLQueryItem(name: "fields", value: "summary,status,priority,issuetype,updated,\(Self.codeReviewerField)")]
         )
+    }
+
+    /// Pull requests linked to an issue through the Jira GitHub integration (dev-status panel).
+    func linkedPullRequests(issueId: String) async throws -> [JiraLinkedPullRequest] {
+        for applicationType in ["oAuth-com.github.integration.production", "GitHub"] {
+            let response: JiraDevStatusResponse = try await request(
+                path: "/rest/dev-status/1.0/issue/detail",
+                queryItems: [
+                    URLQueryItem(name: "issueId", value: issueId),
+                    URLQueryItem(name: "applicationType", value: applicationType),
+                    URLQueryItem(name: "dataType", value: "pullrequest")
+                ]
+            )
+            let pullRequests = response.detail.flatMap { $0.pullRequests ?? [] }
+            if !pullRequests.isEmpty {
+                return pullRequests
+            }
+        }
+        return []
     }
 
     func statuses() async throws -> [JiraStatus] {

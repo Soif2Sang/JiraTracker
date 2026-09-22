@@ -1,6 +1,6 @@
 # GitHub Jira Tracker
 
-Application macOS native de barre de menus pour suivre les PR GitHub ouvertes par l'utilisateur dans `dktunited`, leur CI GitHub Actions et les tickets Jira associés.
+Application macOS native de barre de menus pour suivre les PR GitHub ouvertes par l'utilisateur dans `dktunited`, leur CI GitHub Actions, les tickets Jira associés et les tickets dont l'utilisateur est **Code Reviewer**.
 
 ## Visuels
 
@@ -16,11 +16,11 @@ Trois styles de pastilles au choix : **Complet** (pastille + logo + chiffre), **
 
 ![Styles des pastilles de la barre de menus](docs/menu-bar-badges.png)
 
-### Tableau de bord
+### Barre de menus et vue principale
 
-Vue unifiée des tickets Jira et de leurs PR, avec statut CI et conversations.
+Barre de menus — dans l'ordre : sans PR (bleu) › CI verte › CI en cours › CI en échec › commentaires non résolus (violet) › **à reviewer** (indigo, œil) — et vue unifiée des tickets Jira et de leurs PR, avec statut CI, conversations et filtre **Reviewer**.
 
-![Tableau de bord](docs/dashboard.png)
+![Barre de menus et tableau de bord](docs/dashboard.png)
 
 ## Prérequis
 
@@ -69,6 +69,16 @@ L'application vérifie aussi `GH_TOKEN`. Pour Jira, les noms `JIRA_API_TOKEN`, `
 
 Le bouton d'authentification peut aussi lire une affectation simple `GITHUB_TOKEN=...` ou `export GITHUB_TOKEN=...` dans `~/.zshrc`, sans exécuter le shell.
 
+## Mode démo
+
+Pour visualiser l'interface sans configurer GitHub ni Jira (données factices, aucun appel réseau) :
+
+```sh
+sh Scripts/demo.sh
+```
+
+Variables utiles : `JIRA_TRACKER_THEME=white|black|blue` pour forcer le thème et `JIRA_TRACKER_SCREENSHOT=/tmp/pop.png` (ou `JIRA_TRACKER_SETTINGS_SCREENSHOT`, `JIRA_TRACKER_BADGES_SCREENSHOT`) pour exporter des captures. L'application doit être lancée depuis le bundle `dist/GitHub Jira Tracker.app`, pas le binaire seul.
+
 ## Compiler
 
 Compiler en mode debug sans lancer l'application :
@@ -113,6 +123,17 @@ Les tests utilisent Swift Testing comme dépendance de développement afin de fo
 
 ## État actuel
 
-Le suivi GitHub et Jira est implémenté : découverte des PR, suivi GitHub Actions par SHA, détail lazy des jobs, conversations de review, pastilles chiffrées, caches locaux, polling adaptatif, Keychain et notifications macOS. La vue principale regroupe les tickets assignés et leurs PR et signale les données périmées.
+Le suivi GitHub et Jira est implémenté : découverte des PR, suivi GitHub Actions par SHA, détail lazy des jobs, conversations de review, pastilles chiffrées, caches locaux, polling adaptatif, Keychain et notifications macOS. La vue principale regroupe les tickets assignés, les tickets dont l'utilisateur est Code Reviewer et leurs PR, et signale les données périmées. Les icônes de statut sont des SVG Lucide (ISC) rendus dans les couleurs de l'application.
+
+### Suivi du reviewer
+
+Les tickets où l'utilisateur est renseigné dans le champ Jira **Code Reviewer** (`customfield_11268`) et positionnés dans un statut de review (ex. `To Review`) sont suivis via une requête Jira dédiée. Pour chacun, l'application interroge l'API dev-status de Jira (intégration GitHub) pour retrouver la PR liée, puis l'API GraphQL de GitHub pour inspecter les conversations de review.
+
+Le ticket est retenu dans la barre de menus (badge œil indigo) uniquement lorsque la branche est prête **et** qu'une action de review reste à faire :
+
+- la PR liée n'est pas un *draft* et ses checks ne sont pas en échec ou en cours ;
+- soit l'utilisateur n'a encore rien commenté (review à faire), soit tous ses threads de review sont résolus.
+
+Le ticket est masqué tant que ses threads ne sont pas résolus (l'auteur doit traiter les retours), et sort du suivi dès qu'il quitte le statut `To Review`. Un filtre **Reviewer** dans la barre latérale, ainsi qu'un repère sur chaque ligne, permettent de retrouver ces tickets dans la vue unifiée.
 
 L'entrée `Ordre du suivi…` du menu permet de composer un tri multi-critères. Les statuts Jira sont découverts dynamiquement dans les workflows de chaque projet présent dans le suivi, et les priorités sont chargées depuis Jira. Les états CI GitHub et les états ouverte, draft, fusionnée ou sans PR peuvent être ordonnés séparément. La configuration est appliquée en direct et conservée dans les préférences locales.

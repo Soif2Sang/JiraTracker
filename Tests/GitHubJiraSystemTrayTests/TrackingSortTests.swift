@@ -98,7 +98,8 @@ struct TrackingSortTests {
                 status: JiraStatus(name: status, statusCategory: nil),
                 priority: JiraNamedValue(name: priority),
                 issueType: nil,
-                updated: nil
+                updated: nil,
+                codeReviewer: nil
             )
         )
     }

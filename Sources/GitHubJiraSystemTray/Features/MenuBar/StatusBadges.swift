@@ -157,7 +157,7 @@ final class StatusBadgesNSView: NSView {
     override func accessibilityLabel() -> String? {
         if summary.needsAuthentication { return "GitHub non connecté" }
         if summary.hasError { return "Erreur de synchronisation" }
-        return "\(summary.jiraWithoutPR) tickets sans PR, \(summary.passed) PR réussies, \(summary.running) en cours, \(summary.failed) en échec, \(summary.reviewsPending) avec des conversations non résolues"
+        return "\(summary.jiraWithoutPR) tickets sans PR, \(summary.passed) PR réussies, \(summary.running) en cours, \(summary.failed) en échec, \(summary.reviewsPending) avec des conversations non résolues, \(summary.reviewerPending) à reviewer"
     }
 
     static func items(for summary: StatusSummary) -> [BadgeItem] {
@@ -176,6 +176,7 @@ final class StatusBadgesNSView: NSView {
         add(summary.failed, .systemRed, "xmark")
         add(summary.reviewsPending, .systemPurple, "bubble.left.fill")
         add(summary.unknown, .systemGray, "questionmark")
+        add(summary.reviewerPending, .systemIndigo, "eye.fill")
 
         return items.isEmpty
             ? [BadgeItem(text: "0", color: .systemGray, symbolName: nil)]
@@ -212,7 +213,8 @@ final class StatusBadgesNSView: NSView {
         item.color.setFill()
         NSBezierPath(ovalIn: circle).fill()
         if let symbolName = item.symbolName {
-            drawSymbol(symbolName, in: circle.insetBy(dx: 3.5, dy: 3.5))
+            let inset: CGFloat = symbolName.contains("eye") ? 2.5 : 3.5
+            drawSymbol(symbolName, in: circle.insetBy(dx: inset, dy: inset))
         }
         drawText(item.text, x: circle.maxX + 5, centerY: rect.midY, fontSize: 12)
     }
@@ -393,12 +395,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private(set) var displaySummary = StatusSummary.empty
 
     private let appStore: AppStore
+    private let jiraStore: JiraStore
+    private let demoMode: Bool
+    private var reviewerPending = 0
+    private var isEvaluatingReviewer = false
+    private var reviewerReevaluationNeeded = false
+    private static let demoReviewerCount = 2
 
     init(store: AppStore, jiraStore: JiraStore, theme: ThemeStore, badgeStyle: BadgeStyleStore, demoMode: Bool = false) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         badgeView = StatusBadgesNSView(frame: NSRect(x: 0, y: 0, width: 22, height: 22))
         popover = NSPopover()
         appStore = store
+        self.jiraStore = jiraStore
+        self.demoMode = demoMode
         super.init()
 
         if let button = statusItem.button {
@@ -488,14 +498,74 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func updateBadges() {
+        applySummary()
+        scheduleReviewerEvaluation()
+    }
+
+    private func applySummary() {
         var summary = githubSummary
         summary.jiraWithoutPR = jiraWithoutPRCount
+        summary.reviewerPending = demoMode ? Self.demoReviewerCount : reviewerPending
         summary.hasError = summary.hasError
             || jiraConnectionState == .error
             || jiraConnectionState == .stale
         displaySummary = summary
         badgeView.summary = summary
         statusItem.length = badgeView.intrinsicContentSize.width
+    }
+
+    /// Counts "To Review" tickets where I am the Code Reviewer and my review is actionable:
+    /// either I have not reviewed yet, or all of my threads have been resolved.
+    private func scheduleReviewerEvaluation() {
+        guard !demoMode else { return }
+        guard let login = appStore.githubUserLogin, jiraStore.currentAccountId != nil else {
+            resetReviewerCount()
+            return
+        }
+        let tickets = jiraStore.reviewerIssues()
+        guard !tickets.isEmpty else {
+            resetReviewerCount()
+            return
+        }
+        if isEvaluatingReviewer {
+            reviewerReevaluationNeeded = true
+            return
+        }
+        isEvaluatingReviewer = true
+
+        Task { [weak self] in
+            var count = 0
+            for ticket in tickets {
+                if Task.isCancelled { break }
+                guard let self else { return }
+                let linked = await self.jiraStore.linkedPullRequests(for: ticket)
+                guard let reference = linked.compactMap({ GitHubPullReference(url: $0.url) }).first else {
+                    continue
+                }
+                if let state = await self.appStore.reviewThreadState(for: reference, login: login),
+                   state.isActionable {
+                    count += 1
+                }
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.isEvaluatingReviewer = false
+                if self.reviewerPending != count {
+                    self.reviewerPending = count
+                    self.applySummary()
+                }
+                if self.reviewerReevaluationNeeded {
+                    self.reviewerReevaluationNeeded = false
+                    self.scheduleReviewerEvaluation()
+                }
+            }
+        }
+    }
+
+    private func resetReviewerCount() {
+        guard reviewerPending != 0 else { return }
+        reviewerPending = 0
+        applySummary()
     }
 
     /// Open Jira tickets that are not linked to any tracked pull request.

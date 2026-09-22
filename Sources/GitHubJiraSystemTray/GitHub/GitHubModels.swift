@@ -43,7 +43,25 @@ struct GitHubReviewThreadsPayload: Decodable {
     }
 
     struct PullRequest: Decodable {
+        let isDraft: Bool?
+        let commits: Commits?
         let reviewThreads: ReviewThreads
+    }
+
+    struct Commits: Decodable {
+        let nodes: [Node]
+
+        struct Node: Decodable {
+            let commit: Commit
+
+            struct Commit: Decodable {
+                let statusCheckRollup: StatusCheckRollup?
+
+                struct StatusCheckRollup: Decodable {
+                    let state: String?
+                }
+            }
+        }
     }
 
     struct ReviewThreads: Decodable {
@@ -61,7 +79,12 @@ struct GitHubReviewThreadsPayload: Decodable {
     }
 
     struct Comment: Decodable {
+        let author: Author?
         let createdAt: Date
+
+        struct Author: Decodable {
+            let login: String
+        }
     }
 
     struct PageInfo: Decodable {
@@ -73,6 +96,43 @@ struct GitHubReviewThreadsPayload: Decodable {
 struct GitHubReviewThreadSummary: Equatable {
     let unresolvedCount: Int
     let latestCommentAt: Date?
+}
+
+/// Review threads on a pull request, restricted to the ones the given login took part in.
+struct GitHubReviewThreadState: Equatable {
+    let myThreadCount: Int
+    let myUnresolvedCount: Int
+    let latestMyCommentAt: Date?
+    /// The pull request is still a draft.
+    var isDraft: Bool = false
+    /// Combined `statusCheckRollup` state of the head commit (SUCCESS, FAILURE, PENDING, …).
+    var checkState: String?
+
+    /// Nothing left on my side and the branch is ready: not a draft and checks are green (or absent).
+    var isActionable: Bool {
+        guard myUnresolvedCount == 0, !isDraft else { return false }
+        guard let checkState else { return true }
+        return checkState.uppercased() == "SUCCESS"
+    }
+}
+
+/// Owner/repository/number parsed from a GitHub pull request URL.
+struct GitHubPullReference: Equatable {
+    let owner: String
+    let repository: String
+    let number: Int
+
+    init?(url: URL) {
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard components.count >= 4,
+              components[2] == "pull",
+              let number = Int(components[3]) else {
+            return nil
+        }
+        owner = components[0]
+        repository = components[1]
+        self.number = number
+    }
 }
 
 struct GitHubUser: Codable, Equatable {

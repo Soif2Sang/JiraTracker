@@ -6,6 +6,12 @@ enum BrandAsset: String {
     case github
     case githubActionsRunning
 
+    var image: NSImage? {
+        guard let image = NSImage(data: Data(svg.utf8)) else { return nil }
+        image.isTemplate = true
+        return image
+    }
+
     var svg: String {
         switch self {
         case .jira:
@@ -25,7 +31,7 @@ struct BrandIcon: View {
 
     var body: some View {
         Group {
-            if let image = image {
+            if let image = asset.image {
                 Image(nsImage: image)
                     .resizable()
                     .renderingMode(.template)
@@ -34,11 +40,5 @@ struct BrandIcon: View {
             }
         }
         .frame(width: size, height: size)
-    }
-
-    private var image: NSImage? {
-        guard let image = NSImage(data: Data(asset.svg.utf8)) else { return nil }
-        image.isTemplate = true
-        return image
     }
 }

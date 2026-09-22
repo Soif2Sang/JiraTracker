@@ -10,6 +10,11 @@ struct JiraUser: Decodable {
     let accountId: String
 }
 
+struct JiraUserRef: Codable, Equatable {
+    let accountId: String
+    let displayName: String?
+}
+
 struct JiraIssue: Codable, Equatable, Identifiable {
     let id: String
     let key: String
@@ -30,6 +35,7 @@ struct JiraIssueFields: Codable, Equatable {
     let priority: JiraNamedValue?
     let issueType: JiraNamedValue?
     let updated: String?
+    let codeReviewer: JiraUserRef?
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -37,12 +43,28 @@ struct JiraIssueFields: Codable, Equatable {
         case priority
         case issueType = "issuetype"
         case updated
+        case codeReviewer = "customfield_11268"
     }
 }
 
 extension JiraIssueFields {
     var updatedDate: Date? {
         updated.flatMap(ISO8601Parser.date(from:))
+    }
+}
+
+extension JiraIssue {
+    /// True when the current account is listed as the ticket's Code Reviewer.
+    func isCodeReviewer(accountId: String?) -> Bool {
+        guard let accountId, let reviewer = fields.codeReviewer else { return false }
+        return reviewer.accountId == accountId
+    }
+
+    /// True when the ticket sits in a review status (e.g. "To Review").
+    var isInReviewStatus: Bool {
+        guard let name = fields.status?.name else { return false }
+        let normalized = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        return normalized.contains("review") && !normalized.contains("reviewed")
     }
 }
 
@@ -81,4 +103,21 @@ struct JiraTransition: Codable, Equatable, Identifiable {
 struct JiraCacheSnapshot: Codable {
     let issues: [JiraIssue]
     let savedAt: Date
+}
+
+struct JiraDevStatusResponse: Decodable {
+    let detail: [Detail]
+
+    struct Detail: Decodable {
+        let pullRequests: [JiraLinkedPullRequest]?
+    }
+}
+
+struct JiraLinkedPullRequest: Codable, Equatable, Identifiable {
+    let id: String
+    let url: URL
+    let name: String?
+    let status: String?
+
+    var identity: String { url.absoluteString }
 }

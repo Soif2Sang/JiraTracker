@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let withoutPR = item(1, .systemBlue, "link")
         let passed = item(3, .systemGreen, "checkmark")
         let unknown = item(2, .systemGray, "questionmark")
+        let reviewer = item(2, .systemIndigo, "eye.fill")
         var errorSummary = StatusSummary.empty
         errorSummary.hasError = true
         let mixed = StatusBadgesNSView.items(for: statusItemController?.displaySummary ?? model.store.summary)
@@ -117,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .init(label: "en cours", items: [running], style: .full),
             .init(label: "commentaires", items: [comments], style: .full),
             .init(label: "sans PR", items: [withoutPR], style: .full),
+            .init(label: "reviewer", items: [reviewer], style: .full),
             .init(label: "réussi / inconnu", items: [passed, unknown], style: .full),
             .init(label: "vide", items: StatusBadgesNSView.items(for: .empty), style: .full),
             .init(label: "erreur", items: StatusBadgesNSView.items(for: errorSummary), style: .full)

@@ -241,6 +241,7 @@ struct SettingsView: View {
         summary.passed = 3
         summary.reviewsPending = 4
         summary.jiraWithoutPR = 1
+        summary.reviewerPending = 2
         return summary
     }
 

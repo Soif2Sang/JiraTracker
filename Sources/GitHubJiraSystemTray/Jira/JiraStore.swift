@@ -4,9 +4,12 @@ import SwiftUI
 
 @MainActor
 final class JiraStore: ObservableObject {
-    static let defaultJQL = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+    static let legacyDefaultJQL = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+    /// Fetches both tickets assigned to me and tickets where I am the Code Reviewer (cf[11268]).
+    static let defaultJQL = "(assignee = currentUser() OR cf[11268] = currentUser()) AND resolution = Unresolved ORDER BY updated DESC"
 
     @Published private(set) var issues: [JiraIssue] = []
+    @Published private(set) var currentAccountId: String?
     @Published private(set) var connectionState: ConnectionState = .needsAuthentication
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var errorMessage: String?
@@ -41,7 +44,12 @@ final class JiraStore: ObservableObject {
         self.cache = cache
         self.polling = polling
         self.integrations = integrations
-        jql = UserDefaults.standard.string(forKey: "jira.jql") ?? Self.defaultJQL
+        let storedJQL = UserDefaults.standard.string(forKey: "jira.jql")
+        if storedJQL == nil || storedJQL == Self.legacyDefaultJQL {
+            jql = Self.defaultJQL
+        } else {
+            jql = storedJQL ?? Self.defaultJQL
+        }
         if let snapshot = cache.loadJira() {
             issues = snapshot.issues
             lastUpdated = snapshot.savedAt
@@ -78,6 +86,7 @@ final class JiraStore: ObservableObject {
 
         if reset {
             issues = []
+            currentAccountId = nil
             transitionsByIssueKey = [:]
             availableStatusNames = []
             lastUpdated = nil
@@ -94,15 +103,30 @@ final class JiraStore: ObservableObject {
         return baseURL.appendingPathComponent("browse").appendingPathComponent(issue.key)
     }
 
+    /// Tickets where the current account is the Code Reviewer and the status is a review status.
+    func reviewerIssues() -> [JiraIssue] {
+        issues.filter { $0.isCodeReviewer(accountId: currentAccountId) && $0.isInReviewStatus }
+    }
+
+    /// Pull requests linked to a ticket through the Jira GitHub integration.
+    func linkedPullRequests(for issue: JiraIssue) async -> [JiraLinkedPullRequest] {
+        guard let client else { return [] }
+        return (try? await client.linkedPullRequests(issueId: issue.id)) ?? []
+    }
+
     func loadDemoData() {
         let fixtures = [
-            ("1234", "Workspace settings UI", "En cours", "In Progress", -120.0),
-            ("1250", "Analytics onboarding", "En cours", "In Progress", -720.0),
-            ("1242", "Billing service refactor", "En cours", "In Progress", -2_700.0),
-            ("1260", "API error handling", "En cours", "In Progress", -3_600.0),
-            ("1287", "Improve logging", "En cours", "In Progress", -7_200.0),
-            ("1301", "Ticket sans PR liée", "En cours", "In Progress", -300.0)
+            ("1301", "Ticket sans PR liée", "Ready to dev", "new", -300.0),
+            ("1250", "Analytics onboarding", "En cours", "indeterminate", -720.0),
+            ("1260", "API error handling", "En cours", "indeterminate", -3_600.0),
+            ("1242", "Billing service refactor", "To review", "indeterminate", -2_700.0),
+            ("1234", "Workspace settings UI", "To merge", "indeterminate", -120.0),
+            ("1287", "Improve logging", "To QA", "indeterminate", -7_200.0),
+            ("1290", "Release 2.4 rollout", "To release", "indeterminate", -9_000.0),
+            ("1291", "Feature flags rollout", "To review", "indeterminate", -1_800.0)
         ]
+        let demoAccountId = "demo-reviewer"
+        let reviewerTickets: Set<String> = ["1242", "1291"]
         issues = fixtures.map { number, summary, status, category, offset in
             JiraIssue(
                 id: number,
@@ -113,10 +137,14 @@ final class JiraStore: ObservableObject {
                     status: JiraStatus(name: status, statusCategory: JiraStatusCategory(key: category)),
                     priority: JiraNamedValue(name: "Medium"),
                     issueType: JiraNamedValue(name: "Story"),
-                    updated: ISO8601DateFormatter().string(from: Date().addingTimeInterval(offset))
+                    updated: ISO8601DateFormatter().string(from: Date().addingTimeInterval(offset)),
+                    codeReviewer: reviewerTickets.contains(number)
+                        ? JiraUserRef(accountId: demoAccountId, displayName: "Vous")
+                        : nil
                 )
             )
         }
+        currentAccountId = demoAccountId
         availableStatusNames = ["Ready to dev", "À faire", "Blocked", "En cours", "To review", "To merge", "To QA", "To release", "Terminés"]
         availablePriorityNames = ["Highest", "High", "Medium", "Low"]
         lastUpdated = Date().addingTimeInterval(-120)
@@ -175,6 +203,7 @@ final class JiraStore: ObservableObject {
         pollingTask = nil
         client = nil
         issues = []
+        currentAccountId = nil
         transitionsByIssueKey = [:]
         availableStatusNames = []
         availablePriorityNames = []
@@ -278,6 +307,9 @@ final class JiraStore: ObservableObject {
 
     private func performRefresh(using client: JiraClient) async {
         do {
+            if currentAccountId == nil {
+                currentAccountId = try? await client.currentUser().accountId
+            }
             issues = try await client.searchIssues(jql: jql)
                 .sorted { ($0.fields.updatedDate ?? .distantPast) > ($1.fields.updatedDate ?? .distantPast) }
             let projectKeys = Set(issues.compactMap { issue in

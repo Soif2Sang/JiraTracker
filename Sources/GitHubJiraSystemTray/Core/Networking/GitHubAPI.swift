@@ -210,6 +210,81 @@ final class GitHubClient {
         )
     }
 
+    /// Review threads of a pull request that the given login participated in, with resolution state.
+    func reviewThreadState(
+        owner: String,
+        repository: String,
+        number: Int,
+        login: String
+    ) async throws -> GitHubReviewThreadState {
+        var cursor: String?
+        var myThreadCount = 0
+        var myUnresolvedCount = 0
+        var latestMyCommentAt: Date?
+        var isDraft = false
+        var checkState: String?
+        var capturedMetadata = false
+        let target = login.lowercased()
+
+        repeat {
+            let payload: GitHubReviewThreadsPayload = try await graphQLRequest(
+                query: """
+                query($owner: String!, $repository: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repository) {
+                    pullRequest(number: $number) {
+                      isDraft
+                      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+                      reviewThreads(first: 100, after: $cursor) {
+                        nodes {
+                          isResolved
+                          comments(first: 100) { nodes { author { login } createdAt } }
+                        }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }
+                """,
+                variables: [
+                    "owner": owner,
+                    "repository": repository,
+                    "number": number,
+                    "cursor": cursor.map { $0 as Any } ?? NSNull()
+                ]
+            )
+            guard let pullRequest = payload.repository?.pullRequest else { break }
+            if !capturedMetadata {
+                capturedMetadata = true
+                isDraft = pullRequest.isDraft ?? false
+                checkState = pullRequest.commits?.nodes.first?.commit.statusCheckRollup?.state
+            }
+            let threads = pullRequest.reviewThreads
+
+            for thread in threads.nodes {
+                let myComments = thread.comments.nodes.filter { $0.author?.login.lowercased() == target }
+                guard !myComments.isEmpty else { continue }
+                myThreadCount += 1
+                if !thread.isResolved {
+                    myUnresolvedCount += 1
+                }
+                if let latest = myComments.map(\.createdAt).max() {
+                    latestMyCommentAt = max(latestMyCommentAt ?? latest, latest)
+                }
+            }
+
+            cursor = threads.pageInfo.endCursor
+            if !threads.pageInfo.hasNextPage { break }
+        } while cursor != nil
+
+        return GitHubReviewThreadState(
+            myThreadCount: myThreadCount,
+            myUnresolvedCount: myUnresolvedCount,
+            latestMyCommentAt: latestMyCommentAt,
+            isDraft: isDraft,
+            checkState: checkState
+        )
+    }
+
     private func graphQLRequest<Response: Decodable>(
         query: String,
         variables: [String: Any]

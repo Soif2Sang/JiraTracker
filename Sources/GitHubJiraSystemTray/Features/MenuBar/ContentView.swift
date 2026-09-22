@@ -22,15 +22,25 @@ struct ContentView: View {
     @ObservedObject var store: AppStore
     @ObservedObject var jiraStore: JiraStore
     @ObservedObject var theme: ThemeStore
-    @StateObject private var trackingSort = TrackingSortStore()
-    @State private var selectedFilter = ProcessInfo.processInfo.environment["JIRA_TRACKER_DEMO"] == "1"
-        ? DashboardFilter(statusName: "En cours")
-        : DashboardFilter.all
+    @StateObject private var trackingSort: TrackingSortStore
+    @State private var selectedFilter: DashboardFilter = .all
     @State private var selectedSection: TrackerSection = .overview
     @State private var route: ContentRoute = .dashboard
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @AppStorage("jira.hiddenWorkflowStatuses") private var hiddenStatusesValue = ""
+
+    init(store: AppStore, jiraStore: JiraStore, theme: ThemeStore) {
+        _store = ObservedObject(wrappedValue: store)
+        _jiraStore = ObservedObject(wrappedValue: jiraStore)
+        _theme = ObservedObject(wrappedValue: theme)
+        if ProcessInfo.processInfo.environment["JIRA_TRACKER_DEMO"] == "1",
+           let defaults = UserDefaults(suiteName: "GitHubJiraSystemTray.demo") {
+            _trackingSort = StateObject(wrappedValue: TrackingSortStore(defaults: defaults, initialOrder: .withoutPullRequestFirst))
+        } else {
+            _trackingSort = StateObject(wrappedValue: TrackingSortStore())
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -135,9 +145,7 @@ struct ContentView: View {
                     selectedSection = .overview
                 } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: filter.icon)
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(isSelected ? Color.white : filter.tint)
+                        StatusIconView(icon: filter.icon, size: 20, color: isSelected ? Color.white : filter.tint)
                             .frame(width: 25)
                         Text(filter.title)
                             .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
@@ -191,9 +199,7 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.primary.opacity(0.7))
             } else {
-                Image(systemName: selectedFilter.icon)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(selectedFilter.tint)
+                StatusIconView(icon: selectedFilter.icon, size: 24, color: selectedFilter.tint)
             }
             Text(sectionTitle)
                 .font(.system(size: 17, weight: .semibold))
@@ -329,6 +335,11 @@ struct ContentView: View {
 
     private func count(for filter: DashboardFilter) -> Int {
         if filter == .all { return jiraStore.issues.count + unlinkedPullRequestCount }
+        if filter.isReviewer {
+            return jiraStore.issues.filter {
+                $0.isCodeReviewer(accountId: jiraStore.currentAccountId) && $0.isInReviewStatus
+            }.count
+        }
         return jiraStore.issues.filter { filter.matches(status: $0.fields.status?.name) }.count
     }
 
@@ -386,7 +397,7 @@ struct ContentView: View {
     private var statusVisibility: JiraStatusVisibility { JiraStatusVisibility(rawValue: hiddenStatusesValue) }
 
     private var visibleDashboardFilters: [DashboardFilter] {
-        [.all] + allJiraStatusNames
+        [.all, .reviewer] + allJiraStatusNames
             .filter { !isStatusHidden($0) }
             .map { DashboardFilter(statusName: $0) }
     }
@@ -480,9 +491,7 @@ struct WorkflowCategorySettingsView: View {
                             set: { setHidden(status, !$0) }
                         )) {
                             HStack(spacing: 9) {
-                                Image(systemName: category.icon)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(category.tint)
+                                StatusIconView(icon: category.icon, size: 15, color: category.tint)
                                     .frame(width: 22)
                                 Text(status)
                                     .font(.system(size: 12, weight: .medium))

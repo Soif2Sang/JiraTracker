@@ -81,14 +81,25 @@ final class TrackingSortStore: ObservableObject {
     @Published private(set) var githubCIOrder: [CIStatus]
     @Published private(set) var pullRequestStateOrder: [TrackingPullRequestState]
 
+    enum InitialOrder {
+        case persisted
+        case withoutPullRequestFirst
+    }
+
     private let defaults: UserDefaults
     private let storageKey = "tracking.sort.configuration"
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, initialOrder: InitialOrder = .persisted) {
         self.defaults = defaults
-        let configuration = defaults.data(forKey: storageKey)
-            .flatMap { try? JSONDecoder().decode(TrackingSortConfiguration.self, from: $0) }
-            ?? Self.defaultConfiguration
+        let configuration: TrackingSortConfiguration
+        switch initialOrder {
+        case .persisted:
+            configuration = defaults.data(forKey: storageKey)
+                .flatMap { try? JSONDecoder().decode(TrackingSortConfiguration.self, from: $0) }
+                ?? Self.defaultConfiguration
+        case .withoutPullRequestFirst:
+            configuration = Self.withoutPullRequestFirstConfiguration
+        }
         criteria = configuration.criteria
         jiraStatusOrder = configuration.jiraStatusOrder
         jiraPriorityOrder = configuration.jiraPriorityOrder
@@ -310,6 +321,22 @@ final class TrackingSortStore: ObservableObject {
             TrackingSortCriterion(kind: .jiraStatus, isEnabled: true, direction: .ascending),
             TrackingSortCriterion(kind: .pullRequestState, isEnabled: true, direction: .ascending),
             TrackingSortCriterion(kind: .jiraPriority, isEnabled: false, direction: .ascending),
+            TrackingSortCriterion(kind: .updated, isEnabled: true, direction: .descending),
+            TrackingSortCriterion(kind: .key, isEnabled: true, direction: .ascending)
+        ],
+        jiraStatusOrder: [],
+        jiraPriorityOrder: [],
+        githubCIOrder: [.failure, .running, .cancelled, .unknown, .success],
+        pullRequestStateOrder: [.open, .draft, .merged, .none]
+    )
+
+    /// Demo ordering: tickets without a pull request first, then the Jira workflow.
+    private static let withoutPullRequestFirstConfiguration = TrackingSortConfiguration(
+        criteria: [
+            TrackingSortCriterion(kind: .hasPullRequest, isEnabled: true, direction: .descending),
+            TrackingSortCriterion(kind: .jiraStatus, isEnabled: true, direction: .ascending),
+            TrackingSortCriterion(kind: .githubCI, isEnabled: true, direction: .ascending),
+            TrackingSortCriterion(kind: .reviewThreads, isEnabled: true, direction: .descending),
             TrackingSortCriterion(kind: .updated, isEnabled: true, direction: .descending),
             TrackingSortCriterion(kind: .key, isEnabled: true, direction: .ascending)
         ],

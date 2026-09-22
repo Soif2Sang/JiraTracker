@@ -17,6 +17,7 @@ struct StatusSummary: Equatable {
     var unknown = 0
     var reviewsPending = 0
     var jiraWithoutPR = 0
+    var reviewerPending = 0
     var hasError = false
     var needsAuthentication = false
 
@@ -62,6 +63,22 @@ final class AppStore: ObservableObject {
 
     var allPullRequests: [TrackedPullRequest] {
         pullRequests + mergedPullRequests
+    }
+
+    var githubUserLogin: String? { githubLogin }
+
+    /// Resolution state of the review threads the given login participated in.
+    func reviewThreadState(
+        for reference: GitHubPullReference,
+        login: String
+    ) async -> GitHubReviewThreadState? {
+        guard let client else { return nil }
+        return try? await client.reviewThreadState(
+            owner: reference.owner,
+            repository: reference.repository,
+            number: reference.number,
+            login: login
+        )
     }
 
     private let credentials: CredentialStore
@@ -144,40 +161,49 @@ final class AppStore: ObservableObject {
     }
 
     func loadDemoData() {
-        let statuses: [(CIStatus, Int, String, String, Int, TimeInterval)] = [
-            (.success, 2, "Workspace settings UI", "feature/workspace-settings", 2, -120),
-            (.failure, 5, "Analytics onboarding", "fix/onboarding-analytics", 5, -720),
-            (.success, 1, "Billing service refactor", "refactor/billing-service", 1, -2_700),
-            (.running, 0, "API error handling", "feature/error-handling", 0, -3_600),
-            (.success, 3, "Improve logging", "chore/logging", 3, -7_200)
+        let fixtures: [(
+            status: CIStatus,
+            unresolved: Int,
+            title: String,
+            branch: String,
+            ticket: String,
+            offset: TimeInterval,
+            merged: Bool
+        )] = [
+            (.failure, 5, "Analytics onboarding", "fix/onboarding-analytics", "1250", -720, false),
+            (.running, 0, "API error handling", "feature/error-handling", "1260", -3_600, false),
+            (.success, 1, "Billing service refactor", "refactor/billing-service", "1242", -2_700, false),
+            (.success, 2, "Workspace settings UI", "feature/workspace-settings", "1234", -120, false),
+            (.success, 3, "Improve logging", "chore/logging", "1287", -7_200, true),
+            (.success, 0, "Release 2.4 rollout", "release/2.4", "1290", -9_000, true)
         ]
-        pullRequests = statuses.enumerated().map { index, fixture in
+        pullRequests = fixtures.enumerated().map { index, fixture in
             let run = GitHubWorkflowRun(
                 id: Int64(index + 1),
                 name: "CI",
-                status: fixture.0 == .running ? "in_progress" : "completed",
-                conclusion: fixture.0 == .failure ? "failure" : fixture.0 == .success ? "success" : nil,
+                status: fixture.status == .running ? "in_progress" : "completed",
+                conclusion: fixture.status == .failure ? "failure" : fixture.status == .success ? "success" : nil,
                 htmlURL: URL(string: "https://github.com/acme/platform/actions")!,
                 headSHA: "demo-sha-\(index)",
                 runAttempt: 1,
-                createdAt: Date().addingTimeInterval(fixture.5 - 60),
-                updatedAt: Date().addingTimeInterval(fixture.5),
+                createdAt: Date().addingTimeInterval(fixture.offset - 60),
+                updatedAt: Date().addingTimeInterval(fixture.offset),
                 jobs: nil
             )
             return TrackedPullRequest(
                 id: "acme/platform#\(index + 101)",
-                repository: index == 2 ? "acme/billing" : "acme/platform",
+                repository: fixture.ticket == "1242" ? "acme/billing" : "acme/platform",
                 number: index + 101,
-                title: fixture.2,
+                title: fixture.title,
                 url: URL(string: "https://github.com/acme/platform/pull/\(index + 101)")!,
-                branch: fixture.3,
+                branch: fixture.branch,
                 headSHA: "demo-sha-\(index)",
                 isDraft: false,
-                body: "PROJ-\([1234, 1250, 1242, 1260, 1287][index])",
-                updatedAt: Date().addingTimeInterval(fixture.5),
-                isMerged: index == 4,
+                body: "PROJ-\(fixture.ticket)",
+                updatedAt: Date().addingTimeInterval(fixture.offset),
+                isMerged: fixture.merged,
                 workflowRuns: [run],
-                unresolvedReviewThreadCount: fixture.1
+                unresolvedReviewThreadCount: fixture.unresolved
             )
         }
         mergedPullRequests = []

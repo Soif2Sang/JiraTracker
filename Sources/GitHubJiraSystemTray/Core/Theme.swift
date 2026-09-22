@@ -35,6 +35,14 @@ enum AppTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Indigo used by the reviewer chip/badge, tuned so it stays legible on every theme.
+    var reviewerAccent: Color {
+        switch self {
+        case .white: return Color(red: 0.27, green: 0.29, blue: 0.72)
+        case .black, .blue: return Color(red: 0.56, green: 0.60, blue: 1)
+        }
+    }
+
     var backgroundColors: [Color] {
         switch self {
         case .white:
@@ -60,10 +68,18 @@ enum AppTheme: String, CaseIterable, Identifiable {
 @MainActor
 final class ThemeStore: ObservableObject {
     @Published var selection: AppTheme {
-        didSet { UserDefaults.standard.set(selection.rawValue, forKey: "appearance.theme") }
+        didSet {
+            guard !isOverridden else { return }
+            UserDefaults.standard.set(selection.rawValue, forKey: "appearance.theme")
+        }
     }
 
+    private let isOverridden: Bool
+
     init() {
-        selection = AppTheme(rawValue: UserDefaults.standard.string(forKey: "appearance.theme") ?? "blue") ?? .blue
+        let override = ProcessInfo.processInfo.environment["JIRA_TRACKER_THEME"]
+        isOverridden = override != nil
+        let stored = UserDefaults.standard.string(forKey: "appearance.theme")
+        selection = AppTheme(rawValue: override ?? stored ?? "blue") ?? .blue
     }
 }

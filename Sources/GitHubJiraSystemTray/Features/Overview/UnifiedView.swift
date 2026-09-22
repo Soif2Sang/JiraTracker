@@ -3,33 +3,43 @@ import SwiftUI
 
 struct DashboardFilter: Identifiable, Hashable {
     static let all = DashboardFilter(statusName: nil)
+    static let reviewer = DashboardFilter(statusName: nil, isReviewer: true)
 
     let statusName: String?
-    var id: String { statusName ?? "__all__" }
-    var title: String { statusName ?? "Tous" }
+    let isReviewer: Bool
+    var id: String { isReviewer ? "__reviewer__" : (statusName ?? "__all__") }
+    var title: String { isReviewer ? "Reviewer" : (statusName ?? "Tous") }
 
     init(statusName: String?) {
         self.statusName = statusName
+        self.isReviewer = false
+    }
+
+    private init(statusName: String?, isReviewer: Bool) {
+        self.statusName = statusName
+        self.isReviewer = isReviewer
     }
 
     private var normalized: String {
         statusName?.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) ?? ""
     }
 
-    var icon: String {
-        if statusName == nil { return "square.grid.2x2" }
-        if normalized.contains("ready") { return "chevron.left.forwardslash.chevron.right" }
-        if normalized.contains("block") { return "nosign" }
-        if normalized.contains("review") { return "eye.fill" }
-        if normalized.contains("merge") { return "point.topleft.down.to.point.bottomright.curvepath" }
-        if normalized.contains("qa") || normalized.contains("test") { return "flask" }
-        if normalized.contains("release") || normalized.contains("deploy") { return "paperplane.fill" }
-        if normalized.contains("done") || normalized.contains("termine") || normalized.contains("closed") { return "checkmark.circle.fill" }
-        if normalized.contains("cours") || normalized.contains("progress") { return "circle.dotted" }
-        return "circle"
+    var icon: StatusIcon {
+        if isReviewer { return .review }
+        if statusName == nil { return .grid }
+        if normalized.contains("ready") { return .code }
+        if normalized.contains("block") { return .blocked }
+        if normalized.contains("review") { return .review }
+        if normalized.contains("merge") { return .merge }
+        if normalized.contains("qa") || normalized.contains("test") { return .qa }
+        if normalized.contains("release") || normalized.contains("deploy") { return .release }
+        if normalized.contains("done") || normalized.contains("termine") || normalized.contains("closed") { return .done }
+        if normalized.contains("cours") || normalized.contains("progress") { return .inProgress }
+        return .todo
     }
 
     var tint: Color {
+        if isReviewer { return Color(red: 0.52, green: 0.55, blue: 0.98) }
         if statusName == nil { return Color(red: 0.70, green: 0.79, blue: 0.94) }
         if normalized.contains("block") { return Color(red: 1, green: 0.28, blue: 0.33) }
         if normalized.contains("review") { return Color(red: 0.68, green: 0.32, blue: 0.96) }
@@ -42,8 +52,17 @@ struct DashboardFilter: Identifiable, Hashable {
     }
 
     func matches(status: String?) -> Bool {
+        guard !isReviewer else { return false }
         guard let statusName else { return true }
         return status?.caseInsensitiveCompare(statusName) == .orderedSame
+    }
+
+    /// Issue-level matching, needed for the reviewer filter that depends on the Code Reviewer field.
+    func matches(issue: JiraIssue, accountId: String?) -> Bool {
+        if isReviewer {
+            return issue.isCodeReviewer(accountId: accountId) && issue.isInReviewStatus
+        }
+        return matches(status: issue.fields.status?.name)
     }
 }
 
@@ -74,8 +93,9 @@ struct UnifiedView: View {
     }
 
     private var workItems: [UnifiedWorkItem] {
+        let accountId = jiraStore.currentAccountId
         let issues = jiraStore.issues
-            .filter { filter.matches(status: $0.fields.status?.name) }
+            .filter { issue in filter.matches(issue: issue, accountId: accountId) }
             .map(UnifiedWorkItem.issue)
         let standalonePullRequests = filter == .all ? store.pullRequests.filter { pullRequest in
             let keys = TicketPRLinker.keys(for: pullRequest).map { $0.uppercased() }
@@ -231,6 +251,7 @@ private struct DashboardWorkItemRow: View {
                             .foregroundStyle(Color(red: 0.28, green: 0.68, blue: 1))
                             .buttonStyle(.plain)
                         jiraStatusChip
+                        reviewerChip
                     }
                     Link(title, destination: destination)
                         .font(.system(size: 12, weight: .medium))
@@ -372,14 +393,31 @@ private struct DashboardWorkItemRow: View {
     @ViewBuilder private var jiraStatusChip: some View {
         if let status = issue?.fields.status?.name {
             let category = DashboardFilter(statusName: status)
-            Text(status)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(category.tint)
-                .lineLimit(1)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(category.tint.opacity(theme.selection == .white ? 0.22 : 0.13), in: Capsule())
-                .overlay { Capsule().stroke(category.tint.opacity(theme.selection == .white ? 0.42 : 0.24), lineWidth: 0.75) }
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(category.tint)
+                    .frame(width: 6, height: 6)
+                Text(status)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.primary.opacity(0.6))
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var isReviewerTicket: Bool {
+        guard let issue else { return false }
+        return issue.isCodeReviewer(accountId: jiraStore.currentAccountId) && issue.isInReviewStatus
+    }
+
+    @ViewBuilder private var reviewerChip: some View {
+        if isReviewerTicket {
+            HStack(spacing: 4) {
+                StatusIconView(icon: .review, size: 11, color: theme.selection.reviewerAccent)
+                Text("Reviewer")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.selection.reviewerAccent)
+            }
         }
     }
 
@@ -453,11 +491,16 @@ private struct CIIndicator: View {
     let status: CIStatus
     let isMerged: Bool
     let hasPullRequest: Bool
-    @State private var runningRotation = 0.0
+    private static let glyphSize: CGFloat = 19
+
     var body: some View {
         Group {
             if !hasPullRequest {
-                Image(systemName: "link.badge.plus").foregroundStyle(Color.primary.opacity(0.3))
+                Image(systemName: "link.badge.plus")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(Color.primary.opacity(0.3))
+                    .frame(width: Self.glyphSize, height: Self.glyphSize)
             } else if isMerged {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(red: 0.68, green: 0.42, blue: 0.96))
             } else {
@@ -466,22 +509,16 @@ private struct CIIndicator: View {
                 case .failure: Image(systemName: "xmark.circle.fill").foregroundStyle(Color(red: 1, green: 0.29, blue: 0.32))
                 case .running:
                     ZStack {
-                        Circle().fill(Color(red: 1, green: 0.62, blue: 0.04))
-                        BrandIcon(asset: .githubActionsRunning, size: 12, color: .white)
-                            .rotationEffect(.degrees(runningRotation))
-                            .onAppear {
-                                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
-                                    runningRotation = 360
-                                }
-                            }
+                        Image(systemName: "circle.fill")
+                            .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.04))
+                        BrandIcon(asset: .githubActionsRunning, size: 11, color: .white)
                     }
-                    .frame(width: 19, height: 19)
                 case .cancelled: Image(systemName: "minus.circle.fill").foregroundStyle(.orange)
                 case .unknown: Image(systemName: "circle.dashed").foregroundStyle(Color.primary.opacity(0.3))
                 }
             }
         }
-        .font(.system(size: 21))
+        .font(.system(size: Self.glyphSize))
     }
 }
 
