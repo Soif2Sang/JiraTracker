@@ -46,10 +46,11 @@ struct JiraView: View {
 
 struct JiraAuthenticationView: View {
     @ObservedObject var store: JiraStore
+    var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Spacer()
+            if !compact { Spacer() }
             BrandIcon(asset: .jira, size: 32, color: .blue)
                 .frame(maxWidth: .infinity)
             Text("Connecter Jira")
@@ -80,9 +81,9 @@ struct JiraAuthenticationView: View {
             if let errorMessage = store.errorMessage {
                 ErrorBanner(message: errorMessage)
             }
-            Spacer()
+            if !compact { Spacer() }
         }
-        .padding(22)
+        .padding(compact ? 0 : 22)
     }
 }
 

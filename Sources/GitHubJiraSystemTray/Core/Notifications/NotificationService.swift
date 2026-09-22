@@ -17,21 +17,43 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func requestAuthorization() async -> String? {
+        let center = UNUserNotificationCenter.current()
+        let currentSettings = await center.notificationSettings()
+
+        switch currentSettings.authorizationStatus {
+        case .authorized, .provisional:
+            deliveryMode = .modern
+            return nil
+        case .denied:
+            deliveryMode = .disabled
+            return "Les notifications sont désactivées dans les réglages macOS."
+        case .notDetermined:
+            await MainActor.run {
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            }
+        case .ephemeral:
+            deliveryMode = .modern
+            return nil
+        @unknown default:
+            break
+        }
+
         do {
-            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            let granted = try await center.requestAuthorization(options: [.alert, .sound])
             guard granted else {
                 deliveryMode = .disabled
-                return nil
+                return "L'autorisation d'envoyer des notifications a été refusée."
             }
-            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            let settings = await center.notificationSettings()
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
                 deliveryMode = .disabled
-                return nil
+                return "Les notifications sont désactivées dans les réglages macOS."
             }
+            deliveryMode = .modern
             return nil
         } catch {
             deliveryMode = .disabled
-            return nil
+            return "Impossible d'activer les notifications : \(error.localizedDescription)"
         }
     }
 

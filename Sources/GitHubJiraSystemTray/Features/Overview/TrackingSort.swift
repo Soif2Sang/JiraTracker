@@ -338,10 +338,24 @@ struct TrackingSortSettingsView: View {
     let issues: [JiraIssue]
     let availableStatuses: [String]
     let availablePriorities: [String]
+    var embedded = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        Group {
+            if embedded {
+                content
+            } else {
+                ScrollView { content }
+            }
+        }
+        .onAppear { synchronizeValues() }
+        .onChange(of: issues) { _ in synchronizeValues() }
+        .onChange(of: availableStatuses) { _ in synchronizeValues() }
+        .onChange(of: availablePriorities) { _ in synchronizeValues() }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 12) {
                 Text("Le critère n° 1 est appliqué en premier. En cas d'égalité, l'application passe au suivant.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -366,13 +380,8 @@ struct TrackingSortSettingsView: View {
                     Spacer()
                     Button("Réinitialiser") { sortStore.reset() }
                 }
-            }
-            .padding(12)
         }
-        .onAppear { synchronizeValues() }
-        .onChange(of: issues) { _ in synchronizeValues() }
-        .onChange(of: availableStatuses) { _ in synchronizeValues() }
-        .onChange(of: availablePriorities) { _ in synchronizeValues() }
+        .padding(embedded ? 0 : 12)
     }
 
     private func synchronizeValues() {
@@ -551,13 +560,13 @@ struct TrackingSortSettingsView: View {
         HStack(spacing: 2) {
             Button { move(-1) } label: {
                 Image(systemName: "chevron.up")
-                    .frame(width: 20, height: 20)
+                    .iconHitTarget(32)
             }
             .buttonStyle(.borderless)
             .disabled(index == 0)
             Button { move(1) } label: {
                 Image(systemName: "chevron.down")
-                    .frame(width: 20, height: 20)
+                    .iconHitTarget(32)
             }
             .buttonStyle(.borderless)
             .disabled(index == count - 1)

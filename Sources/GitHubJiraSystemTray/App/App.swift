@@ -15,8 +15,7 @@ struct GitHubJiraSystemTrayApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let store = AppStore()
-    private let jiraStore = JiraStore()
+    private let model = AppModel.shared
     private var statusItemController: StatusItemController?
     private var wakeObserver: Any?
     private let networkMonitor = NWPathMonitor()
@@ -25,10 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        statusItemController = StatusItemController(store: store, jiraStore: jiraStore, demoMode: demoMode)
+        statusItemController = StatusItemController(store: model.store, jiraStore: model.jiraStore, theme: model.theme, demoMode: demoMode)
         if demoMode {
-            store.loadDemoData()
-            jiraStore.loadDemoData()
+            model.store.loadDemoData()
+            model.jiraStore.loadDemoData()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 self?.statusItemController?.showPopover()
                 if let path = ProcessInfo.processInfo.environment["JIRA_TRACKER_SCREENSHOT"] {
@@ -36,10 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.statusItemController?.capturePopover(to: path)
                     }
                 }
+                if let path = ProcessInfo.processInfo.environment["JIRA_TRACKER_SETTINGS_SCREENSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        self?.showSettings()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            self?.captureSettingsWindow(to: path)
+                        }
+                    }
+                }
             }
         } else {
-            store.start()
-            jiraStore.start()
+            model.store.start()
+            model.jiraStore.start()
         }
 
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -48,8 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.store.refreshNow()
-                self?.jiraStore.refreshNow()
+                self?.model.store.refreshNow()
+                self?.model.jiraStore.refreshNow()
             }
         }
 
@@ -58,8 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let isAvailable = path.status == .satisfied
             Task { @MainActor in
                 if isAvailable && self.networkWasUnavailable {
-                    self.store.refreshNow()
-                    self.jiraStore.refreshNow()
+                    self.model.store.refreshNow()
+                    self.model.jiraStore.refreshNow()
                 }
                 self.networkWasUnavailable = !isAvailable
             }
@@ -72,5 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
         }
+    }
+
+    func showSettings() {
+        statusItemController?.showSettings()
+    }
+
+    private func captureSettingsWindow(to path: String) {
+        statusItemController?.capturePopover(to: path)
     }
 }

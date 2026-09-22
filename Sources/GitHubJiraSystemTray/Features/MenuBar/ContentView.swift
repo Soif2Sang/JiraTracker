@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let openSettingsRoute = Notification.Name("GitHubJiraSystemTray.openSettingsRoute")
+}
+
+private enum ContentRoute {
+    case dashboard
+    case settings
+}
+
 enum TrackerSection: Hashable {
     case overview
     case pullRequests
@@ -12,46 +21,71 @@ enum TrackerSection: Hashable {
 struct ContentView: View {
     @ObservedObject var store: AppStore
     @ObservedObject var jiraStore: JiraStore
+    @ObservedObject var theme: ThemeStore
     @StateObject private var trackingSort = TrackingSortStore()
     @State private var selectedFilter = ProcessInfo.processInfo.environment["JIRA_TRACKER_DEMO"] == "1"
         ? DashboardFilter(statusName: "En cours")
         : DashboardFilter.all
     @State private var selectedSection: TrackerSection = .overview
+    @State private var route: ContentRoute = .dashboard
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @AppStorage("jira.hiddenWorkflowStatuses") private var hiddenStatusesValue = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-            HStack(spacing: 0) {
-                sidebar
-                Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1)
-                detail
+        ZStack {
+            dashboard
+                .opacity(route == .dashboard ? 1 : 0)
+                .allowsHitTesting(route == .dashboard)
+
+            if route == .settings {
+                SettingsView(model: AppModel.shared, trackingSort: trackingSort) {
+                    if let status = selectedFilter.statusName, isStatusHidden(status) {
+                        selectedFilter = .all
+                        selectedSection = .overview
+                    }
+                    route = .dashboard
+                }
             }
-            Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
-            footer
         }
         .frame(width: 780, height: 600)
         .background {
             ZStack {
                 VisualEffectBackground().ignoresSafeArea()
                 LinearGradient(
-                    colors: [Color(red: 0.035, green: 0.085, blue: 0.14).opacity(0.98), Color(red: 0.025, green: 0.055, blue: 0.09).opacity(0.98)],
+                    colors: theme.selection.backgroundColors.map { $0.opacity(0.98) },
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(theme.selection.colorScheme)
+        .environmentObject(theme)
         .overlay {
             Button("") { searchFocused = true }
                 .keyboardShortcut("k", modifiers: .command)
+                .disabled(route != .dashboard)
                 .opacity(0)
                 .frame(width: 0, height: 0)
         }
         .onAppear {
             DispatchQueue.main.async { searchFocused = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettingsRoute)) { _ in
+            route = .settings
+        }
+    }
+
+    private var dashboard: some View {
+        VStack(spacing: 0) {
+            searchBar
+            HStack(spacing: 0) {
+                sidebar
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 1)
+                detail
+            }
+            Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
+            footer
         }
     }
 
@@ -68,24 +102,25 @@ struct ContentView: View {
             if !searchText.isEmpty {
                 Button { searchText = "" } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .iconHitTarget(32)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.white.opacity(0.4))
+                .foregroundStyle(Color.primary.opacity(0.4))
             }
             HStack(spacing: 7) {
                 Image(systemName: "command")
                 Text("K")
             }
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Color.white.opacity(0.7))
+            .foregroundStyle(Color.primary.opacity(0.7))
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
-            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
         }
         .padding(.horizontal, 15)
         .frame(height: 40)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.09)) }
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+        .overlay { RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.09)) }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
@@ -94,6 +129,7 @@ struct ContentView: View {
         ScrollView {
             LazyVStack(spacing: 4) {
                 ForEach(visibleDashboardFilters) { filter in
+                let isSelected = selectedFilter == filter && selectedSection == .overview
                 Button {
                     selectedFilter = filter
                     selectedSection = .overview
@@ -101,24 +137,24 @@ struct ContentView: View {
                     HStack(spacing: 12) {
                         Image(systemName: filter.icon)
                             .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(filter.tint)
+                            .foregroundStyle(isSelected ? Color.white : filter.tint)
                             .frame(width: 25)
                         Text(filter.title)
-                            .font(.system(size: 13, weight: selectedFilter == filter && selectedSection == .overview ? .semibold : .regular))
-                            .foregroundStyle(Color.white.opacity(0.82))
+                            .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.82))
                         Spacer()
                         Text("\(count(for: filter))")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.8))
+                            .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.8))
                             .frame(minWidth: 28, minHeight: 28)
-                            .background(Color.white.opacity(0.08), in: Circle())
+                            .background(isSelected ? Color.white.opacity(0.18) : Color.primary.opacity(0.1), in: Circle())
                     }
                     .padding(.horizontal, 13)
                     .frame(height: 42)
                     .background {
-                        if selectedFilter == filter && selectedSection == .overview {
+                        if isSelected {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(LinearGradient(colors: [Color(red: 0.06, green: 0.40, blue: 0.95), Color(red: 0.08, green: 0.27, blue: 0.71)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .fill(theme.selection.selectionGradient)
                         }
                     }
                     .contentShape(Rectangle())
@@ -131,7 +167,7 @@ struct ContentView: View {
             .padding(.bottom, 6)
         }
         .frame(width: 215)
-        .background(Color.black.opacity(0.05))
+        .background(Color.primary.opacity(0.05))
     }
 
     private var detail: some View {
@@ -150,9 +186,10 @@ struct ContentView: View {
             if selectedSection != .overview {
                 Button { selectedSection = .overview } label: {
                     Image(systemName: "chevron.left")
+                        .iconHitTarget(32)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.white.opacity(0.7))
+                .foregroundStyle(Color.primary.opacity(0.7))
             } else {
                 Image(systemName: selectedFilter.icon)
                     .font(.system(size: 24, weight: .medium))
@@ -162,26 +199,19 @@ struct ContentView: View {
                 .font(.system(size: 17, weight: .semibold))
             Text("\(sectionCount)")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.78))
+                .foregroundStyle(Color.primary.opacity(0.78))
                 .frame(minWidth: 31, minHeight: 31)
-                .background(Color.white.opacity(0.07), in: Circle())
+                .background(Color.primary.opacity(0.07), in: Circle())
             Spacer()
-            Menu {
-                Button("Ordre du suivi…") { selectedSection = .sorting }
-                Button("Catégories Jira…") { selectedSection = .categories }
-                Button("Tester les notifications") { store.testNotifications() }
-                Button("Réglages des notifications…") { openNotificationSettings() }
-                Divider()
-                Button("Déconnecter GitHub") { store.disconnect() }
-                Button("Déconnecter Jira") { jiraStore.disconnect() }
-                Divider()
-                Button("Quitter") { NSApplication.shared.terminate(nil) }
-            } label: {
+             Button {
+                 route = .settings
+             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18))
-                    .frame(width: 32, height: 32)
+                    .iconHitTarget(36)
             }
-            .menuStyle(.borderlessButton)
+             .buttonStyle(.plain)
+             .help("Ouvrir les réglages")
         }
         .padding(.horizontal, 14)
         .frame(height: 50)
@@ -237,18 +267,20 @@ struct ContentView: View {
                         .font(.system(size: 16))
                 }
             }
+            .frame(width: 36, height: 36)
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
             .foregroundStyle(Color(red: 0.68, green: 0.78, blue: 0.93))
             .disabled(isCurrentSectionLoading)
             Text(lastUpdatedLabel)
                 .font(.system(size: 11))
-                .foregroundStyle(Color.white.opacity(0.65))
+                .foregroundStyle(Color.primary.opacity(0.65))
             Spacer()
-            Rectangle().fill(Color.white.opacity(0.11)).frame(width: 1, height: 22)
+            Rectangle().fill(Color.primary.opacity(0.11)).frame(width: 1, height: 22)
             brandFooterButton("Jira", asset: .jira) { selectedSection = .jira }
             brandFooterButton("GitHub", asset: .github) { selectedSection = .pullRequests }
             footerButton("CI/CD", icon: "point.3.connected.trianglepath.dotted") { selectedSection = .pullRequests }
-            Rectangle().fill(Color.white.opacity(0.11)).frame(width: 1, height: 22)
+            Rectangle().fill(Color.primary.opacity(0.11)).frame(width: 1, height: 22)
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
@@ -256,10 +288,13 @@ struct ContentView: View {
                     Text("Quitter")
                     Image(systemName: "power")
                 }
+                .padding(.horizontal, 8)
+                .frame(minHeight: 36)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .font(.system(size: 12))
-            .foregroundStyle(Color.white.opacity(0.72))
+            .foregroundStyle(Color.primary.opacity(0.72))
         }
         .padding(.horizontal, 16)
         .frame(height: 44)
@@ -268,22 +303,28 @@ struct ContentView: View {
     private func footerButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
+                .padding(.horizontal, 7)
+                .frame(minHeight: 36)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .font(.system(size: 12))
-        .foregroundStyle(Color.white.opacity(0.72))
+        .foregroundStyle(Color.primary.opacity(0.72))
     }
 
     private func brandFooterButton(_ title: String, asset: BrandAsset, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                BrandIcon(asset: asset, size: 15, color: Color.white.opacity(0.78))
+                BrandIcon(asset: asset, size: 15, color: Color.primary.opacity(0.78))
                 Text(title)
             }
+            .padding(.horizontal, 7)
+            .frame(minHeight: 36)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .font(.system(size: 12))
-        .foregroundStyle(Color.white.opacity(0.72))
+        .foregroundStyle(Color.primary.opacity(0.72))
     }
 
     private func count(for filter: DashboardFilter) -> Int {
@@ -385,14 +426,10 @@ struct ContentView: View {
         return "Dernière mise à jour : \(formatter.localizedString(for: date, relativeTo: Date()))"
     }
 
-    private func openNotificationSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") else { return }
-        NSWorkspace.shared.open(url)
-    }
 }
 
 extension View {
-    func iconHitTarget(_ size: CGFloat = 28) -> some View {
+    func iconHitTarget(_ size: CGFloat = 32) -> some View {
         frame(width: size, height: size).contentShape(Rectangle())
     }
 }
@@ -416,74 +453,88 @@ struct WorkflowCategorySettingsView: View {
     let statusNames: [String]
     let isHidden: (String) -> Bool
     let setHidden: (String, Bool) -> Void
+    var embedded = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+        Group {
+            if embedded {
+                content
+            } else {
+                ScrollView { content }
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !embedded {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Workflow Jira")
                         .font(.system(size: 15, weight: .semibold))
                     Text("Choisissez les statuts affichés dans la barre latérale. La liste est synchronisée avec les workflows Jira au lancement.")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.white.opacity(0.55))
+                        .foregroundStyle(Color.primary.opacity(0.55))
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
 
-                if statusNames.isEmpty {
-                    HStack(spacing: 9) {
-                        ProgressView().controlSize(.small)
-                        Text("Chargement des statuts Jira…")
-                    }
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.white.opacity(0.55))
-                    .frame(maxWidth: .infinity, minHeight: 140)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(statusNames, id: \.self) { status in
-                            let category = DashboardFilter(statusName: status)
-                            Toggle(isOn: Binding(
-                                get: { !isHidden(status) },
-                                set: { setHidden(status, !$0) }
-                            )) {
-                                HStack(spacing: 11) {
-                                    Image(systemName: category.icon)
-                                        .font(.system(size: 17, weight: .medium))
-                                        .foregroundStyle(category.tint)
-                                        .frame(width: 24)
-                                    Text(status)
-                                        .font(.system(size: 13, weight: .medium))
-                                }
-                            }
-                            .toggleStyle(.switch)
-                            .padding(.horizontal, 14)
-                            .frame(height: 48)
-
-                            if status != statusNames.last {
-                                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            if statusNames.isEmpty {
+                HStack(spacing: 9) {
+                    ProgressView().controlSize(.small)
+                    Text("Chargement des statuts Jira…")
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(Color.primary.opacity(0.55))
+                .frame(maxWidth: .infinity, minHeight: 100)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                    ForEach(statusNames, id: \.self) { status in
+                        let category = DashboardFilter(statusName: status)
+                        Toggle(isOn: Binding(
+                            get: { !isHidden(status) },
+                            set: { setHidden(status, !$0) }
+                        )) {
+                            HStack(spacing: 9) {
+                                Image(systemName: category.icon)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(category.tint)
+                                    .frame(width: 22)
+                                Text(status)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
                             }
                         }
+                        .toggleStyle(.switch)
+                        .padding(.horizontal, 11)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.09)) }
                     }
-                    .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
-                    .overlay { RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.09)) }
+                }
 
+                HStack {
+                    Spacer()
                     Button("Tout afficher") {
                         for status in statusNames { setHidden(status, false) }
                     }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 12, weight: .medium))
+                    .buttonStyle(.bordered)
+                    .font(.system(size: 11, weight: .medium))
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
         }
+        .padding(.horizontal, embedded ? 0 : 18)
+        .padding(.bottom, embedded ? 0 : 18)
     }
 }
 
 struct AuthenticationView: View {
     @ObservedObject var store: AppStore
+    var compact = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Spacer()
+            if !compact { Spacer() }
             Image(systemName: "key.horizontal").font(.system(size: 34)).foregroundStyle(.blue).frame(maxWidth: .infinity)
             Text("Connecter GitHub").font(.title3.weight(.semibold)).frame(maxWidth: .infinity)
             Text("Ajoutez un fine-grained Personal Access Token avec les permissions Metadata, Pull requests et Actions en lecture.")
@@ -494,9 +545,9 @@ struct AuthenticationView: View {
                 Spacer()
                 Button("Connecter") { store.saveToken() }.buttonStyle(.borderedProminent)
             }
-            Spacer()
+            if !compact { Spacer() }
         }
-        .padding(28)
+        .padding(compact ? 0 : 28)
     }
 }
 

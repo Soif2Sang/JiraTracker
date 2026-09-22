@@ -67,6 +67,7 @@ struct UnifiedView: View {
     let searchText: String
     let onConfigureJira: () -> Void
     let onConfigureGitHub: () -> Void
+    @EnvironmentObject private var theme: ThemeStore
 
     private var linkedIssueKeys: Set<String> {
         Set(jiraStore.issues.map(\.key).map { $0.uppercased() })
@@ -82,34 +83,37 @@ struct UnifiedView: View {
         }.map(UnifiedWorkItem.pullRequest) : []
         return (issues + standalonePullRequests)
             .filter(matchesSearch)
-            .sorted { sortStore.areInIncreasingOrder(sortFacts(for: $0), sortFacts(for: $1)) }
+            .map { ($0, sortFacts(for: $0)) }
+            .sorted { sortStore.areInIncreasingOrder($0.1, $1.1) }
+            .map(\.0)
     }
 
     var body: some View {
+        let items = workItems
         VStack(spacing: 0) {
             sourceStatus
-            if isInitialLoading {
+            if isInitialLoading(items) {
                 loadingState
-            } else if workItems.isEmpty {
+            } else if items.isEmpty {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(workItems) { item in
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             DashboardWorkItemRow(item: item, store: store, jiraStore: jiraStore)
-                            if item.id != workItems.last?.id {
+                            if index < items.count - 1 {
                                 Rectangle()
-                                    .fill(Color.white.opacity(0.09))
+                                    .fill(Color.primary.opacity(0.09))
                                     .frame(height: 1)
                             }
                         }
                     }
                 }
-                .background(Color(red: 0.035, green: 0.075, blue: 0.12).opacity(0.52))
+                .background(theme.selection.backgroundColors[0].opacity(0.52))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay {
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.11), lineWidth: 1)
+                        .stroke(Color.primary.opacity(0.11), lineWidth: 1)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
@@ -131,8 +135,8 @@ struct UnifiedView: View {
         return haystack.localizedCaseInsensitiveContains(query)
     }
 
-    private var isInitialLoading: Bool {
-        workItems.isEmpty && (store.isRefreshing || jiraStore.isRefreshing || store.connectionState == .loading || jiraStore.connectionState == .loading)
+    private func isInitialLoading(_ items: [UnifiedWorkItem]) -> Bool {
+        items.isEmpty && (store.isRefreshing || jiraStore.isRefreshing || store.connectionState == .loading || jiraStore.connectionState == .loading)
     }
 
     @ViewBuilder private var sourceStatus: some View {
@@ -154,12 +158,12 @@ struct UnifiedView: View {
         VStack(spacing: 9) {
             Image(systemName: searchText.isEmpty ? "tray" : "magnifyingglass")
                 .font(.system(size: 27, weight: .light))
-                .foregroundStyle(Color.white.opacity(0.45))
+                .foregroundStyle(Color.primary.opacity(0.45))
             Text(searchText.isEmpty ? "Aucun élément dans cette étape" : "Aucun résultat")
                 .font(.system(size: 14, weight: .semibold))
             Text(searchText.isEmpty ? "Les tickets apparaîtront ici quand leur statut changera." : "Essayez une autre recherche.")
                 .font(.system(size: 12))
-                .foregroundStyle(Color.white.opacity(0.5))
+                .foregroundStyle(Color.primary.opacity(0.5))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -169,7 +173,7 @@ struct UnifiedView: View {
             ProgressView().controlSize(.small)
             Text("Synchronisation de GitHub et Jira…")
                 .font(.system(size: 12))
-                .foregroundStyle(Color.white.opacity(0.55))
+                .foregroundStyle(Color.primary.opacity(0.55))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -205,6 +209,7 @@ private struct DashboardWorkItemRow: View {
     let item: UnifiedWorkItem
     @ObservedObject var store: AppStore
     @ObservedObject var jiraStore: JiraStore
+    @EnvironmentObject private var theme: ThemeStore
     @State private var isExpanded = false
 
     private var issue: JiraIssue? { if case let .issue(issue) = item { return issue }; return nil }
@@ -235,14 +240,14 @@ private struct DashboardWorkItemRow: View {
                     }
                     Link(title, destination: destination)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                         .lineLimit(1)
                         .buttonStyle(.plain)
                     HStack(spacing: 10) {
                         if let pr = primaryPR {
                             Link(destination: pr.url) {
                                 HStack(spacing: 4) {
-                                    BrandIcon(asset: .github, size: 10, color: Color.white.opacity(0.58))
+                                    BrandIcon(asset: .github, size: 10, color: Color.primary.opacity(0.58))
                                     Text(pr.repository)
                                 }
                             }
@@ -265,7 +270,7 @@ private struct DashboardWorkItemRow: View {
                         }
                     }
                     .font(.system(size: 10))
-                    .foregroundStyle(Color.white.opacity(0.58))
+                    .foregroundStyle(Color.primary.opacity(0.58))
                     .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -273,7 +278,7 @@ private struct DashboardWorkItemRow: View {
                 commentControl
                 Text(activityLabel)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.58))
+                    .foregroundStyle(Color.primary.opacity(0.58))
                     .frame(width: 30, alignment: .trailing)
                 detailsControl
             }
@@ -281,7 +286,7 @@ private struct DashboardWorkItemRow: View {
             .frame(height: 70)
 
             if isExpanded, let pullRequest = primaryPR, !pullRequest.isMerged {
-                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
                 WorkflowDetails(pullRequest: pullRequest)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -309,7 +314,7 @@ private struct DashboardWorkItemRow: View {
             } label: {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.82))
+                    .foregroundStyle(Color.primary.opacity(0.82))
                     .frame(width: 18, height: 30)
                     .contentShape(Rectangle())
             }
@@ -319,7 +324,7 @@ private struct DashboardWorkItemRow: View {
             Link(destination: pullRequest.url) {
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.72))
+                    .foregroundStyle(Color.primary.opacity(0.72))
                     .frame(width: 18, height: 30)
             }
             .buttonStyle(.plain)
@@ -364,10 +369,10 @@ private struct DashboardWorkItemRow: View {
     private var commentBadge: some View {
         Label("\(comments)", systemImage: "ellipsis.message.fill")
             .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Color.white.opacity(0.72))
+            .foregroundStyle(Color.primary.opacity(0.72))
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
-            .background(Color.white.opacity(0.07), in: Capsule())
+            .background(Color.primary.opacity(theme.selection == .white ? 0.12 : 0.07), in: Capsule())
     }
 
     @ViewBuilder private var jiraStatusChip: some View {
@@ -379,8 +384,8 @@ private struct DashboardWorkItemRow: View {
                 .lineLimit(1)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(category.tint.opacity(0.13), in: Capsule())
-                .overlay { Capsule().stroke(category.tint.opacity(0.24), lineWidth: 0.5) }
+                .background(category.tint.opacity(theme.selection == .white ? 0.22 : 0.13), in: Capsule())
+                .overlay { Capsule().stroke(category.tint.opacity(theme.selection == .white ? 0.42 : 0.24), lineWidth: 0.75) }
         }
     }
 
@@ -412,7 +417,7 @@ private struct CIIndicator: View {
     var body: some View {
         Group {
             if !hasPullRequest {
-                Image(systemName: "link.badge.plus").foregroundStyle(Color.white.opacity(0.3))
+                Image(systemName: "link.badge.plus").foregroundStyle(Color.primary.opacity(0.3))
             } else if isMerged {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(red: 0.68, green: 0.42, blue: 0.96))
             } else {
@@ -428,7 +433,7 @@ private struct CIIndicator: View {
                             }
                         }
                 case .cancelled: Image(systemName: "minus.circle.fill").foregroundStyle(.orange)
-                case .unknown: Image(systemName: "circle.dashed").foregroundStyle(Color.white.opacity(0.3))
+                case .unknown: Image(systemName: "circle.dashed").foregroundStyle(Color.primary.opacity(0.3))
                 }
             }
         }
@@ -449,6 +454,6 @@ struct SourceSetupRow: View {
             Button(actionTitle, action: action).buttonStyle(.borderless)
         }
         .padding(8)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
 }

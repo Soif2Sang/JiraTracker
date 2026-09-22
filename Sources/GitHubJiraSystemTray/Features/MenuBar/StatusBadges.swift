@@ -117,7 +117,7 @@ final class StatusBadgesNSView: NSView {
             totalWidth += width(of: item.text) + 12 + (item.symbolName == nil ? 0 : 14)
         }
         totalWidth += CGFloat(max(0, items.count - 1) * 4)
-        return NSSize(width: max(totalWidth, 22), height: 22)
+        return NSSize(width: max(totalWidth, 28), height: 22)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -203,7 +203,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private var githubSummary = StatusSummary.empty
     private var jiraConnectionState: ConnectionState = .needsAuthentication
 
-    init(store: AppStore, jiraStore: JiraStore, demoMode: Bool = false) {
+    init(store: AppStore, jiraStore: JiraStore, theme: ThemeStore, demoMode: Bool = false) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         badgeView = StatusBadgesNSView(frame: NSRect(x: 0, y: 0, width: 22, height: 22))
         popover = NSPopover()
@@ -222,7 +222,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.animates = true
         popover.delegate = self
         popover.contentSize = NSSize(width: 780, height: 600)
-        let hostingController = NSHostingController(rootView: ContentView(store: store, jiraStore: jiraStore))
+        let hostingController = NSHostingController(rootView: ContentView(store: store, jiraStore: jiraStore, theme: theme))
         hostingController.view.wantsLayer = true
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
         popover.contentViewController = hostingController
@@ -250,6 +250,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     func showPopover() {
         guard !popover.isShown, let button = statusItem.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    func showSettings() {
+        if !popover.isShown, let button = statusItem.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .openSettingsRoute, object: nil)
+        }
     }
 
     func capturePopover(to path: String) {
