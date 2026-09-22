@@ -2,6 +2,26 @@
 
 Application macOS native de barre de menus pour suivre les PR GitHub ouvertes par l'utilisateur dans `dktunited`, leur CI GitHub Actions et les tickets Jira associés.
 
+## Visuels
+
+### Réglages
+
+Thème de l'interface et choix du style des pastilles de la barre de menus.
+
+![Réglages — Affichage et style des pastilles](docs/settings.png)
+
+### Barre de menus
+
+Trois styles de pastilles au choix : **Complet** (pastille + logo + chiffre), **Compact** (pastille colorée avec le chiffre) et **Minimal** (point de couleur + chiffre).
+
+![Styles des pastilles de la barre de menus](docs/menu-bar-badges.png)
+
+### Tableau de bord
+
+Vue unifiée des tickets Jira et de leurs PR, avec statut CI et conversations.
+
+![Tableau de bord](docs/dashboard.png)
+
 ## Prérequis
 
 - macOS 13 ou supérieur ;

@@ -97,10 +97,17 @@ struct StatusSummaryView: View {
 }
 
 final class StatusBadgesNSView: NSView {
-    private struct BadgeItem {
+    struct BadgeItem {
         let text: String
         let color: NSColor
         let symbolName: String?
+    }
+
+    var style: BadgeDisplayStyle = .full {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
     }
 
     var summary = StatusSummary.empty {
@@ -110,49 +117,36 @@ final class StatusBadgesNSView: NSView {
         }
     }
 
-    override var intrinsicContentSize: NSSize {
-        let items = badgeItems
-        var totalWidth: CGFloat = 0
-        for item in items {
-            totalWidth += width(of: item.text) + 12 + (item.symbolName == nil ? 0 : 14)
+    /// Explicit items used by the demo preview; when nil the items are derived from `summary`.
+    var overrideItems: [BadgeItem]? {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
         }
-        totalWidth += CGFloat(max(0, items.count - 1) * 4)
-        return NSSize(width: max(totalWidth, 28), height: 22)
+    }
+
+    private let barHeight: CGFloat = 22
+
+    private var items: [BadgeItem] {
+        overrideItems ?? Self.items(for: summary)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let total = items.map(itemWidth).reduce(0, +) + CGFloat(max(0, items.count - 1)) * spacing
+        return NSSize(width: max(ceil(total), 24), height: barHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         var x: CGFloat = 0
-
-        for item in badgeItems {
-            let textWidth = width(of: item.text)
-            let symbolWidth: CGFloat = item.symbolName == nil ? 0 : 14
-            let pillRect = NSRect(x: x, y: 1, width: textWidth + symbolWidth + 12, height: 20)
-            item.color.setFill()
-            NSBezierPath(roundedRect: pillRect, xRadius: 10, yRadius: 10).fill()
-
-            var textX = pillRect.minX + 6
-            if let symbolName = item.symbolName,
-               let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-                let sizeConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
-                let colorConfiguration = NSImage.SymbolConfiguration(paletteColors: [.white])
-                let configuredImage = image.withSymbolConfiguration(sizeConfiguration.applying(colorConfiguration)) ?? image
-                configuredImage.draw(in: NSRect(x: textX, y: pillRect.minY + 5, width: 10, height: 10))
-                textX += symbolWidth
+        for item in items {
+            let width = itemWidth(item)
+            switch style {
+            case .full: drawFull(item, x: x, width: width)
+            case .compact: drawCompact(item, x: x, width: width)
+            case .minimal: drawMinimal(item, x: x, width: width)
             }
-
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 11, weight: .bold),
-                .foregroundColor: NSColor.white
-            ]
-            let textRect = NSRect(
-                x: textX,
-                y: pillRect.minY + (pillRect.height - 13) / 2,
-                width: textWidth,
-                height: 15
-            )
-            (item.text as NSString).draw(in: textRect, withAttributes: attributes)
-            x = pillRect.maxX + 4
+            x += width + spacing
         }
     }
 
@@ -163,34 +157,227 @@ final class StatusBadgesNSView: NSView {
     override func accessibilityLabel() -> String? {
         if summary.needsAuthentication { return "GitHub non connecté" }
         if summary.hasError { return "Erreur de synchronisation" }
-        return "\(summary.failed) PR en échec, \(summary.running) en cours, \(summary.passed) réussies, \(summary.reviewsPending) avec des conversations non résolues"
+        return "\(summary.jiraWithoutPR) tickets sans PR, \(summary.passed) PR réussies, \(summary.running) en cours, \(summary.failed) en échec, \(summary.reviewsPending) avec des conversations non résolues"
     }
 
-    private var badgeItems: [BadgeItem] {
+    static func items(for summary: StatusSummary) -> [BadgeItem] {
         if summary.needsAuthentication || summary.hasError {
-            return [BadgeItem(text: "!", color: StatusBadgeKind.unknown.nsColor, symbolName: nil)]
+            return [BadgeItem(text: "!", color: .systemGray, symbolName: "exclamationmark.triangle.fill")]
         }
 
-        let items = [
-            BadgeItem(text: String(summary.reviewsPending), color: StatusBadgeKind.review.nsColor, symbolName: "bubble.left.fill"),
-            BadgeItem(text: String(summary.failed), color: StatusBadgeKind.failure.nsColor, symbolName: nil),
-            BadgeItem(text: String(summary.running), color: StatusBadgeKind.running.nsColor, symbolName: nil),
-            BadgeItem(text: String(summary.passed), color: StatusBadgeKind.success.nsColor, symbolName: nil),
-            BadgeItem(text: String(summary.unknown), color: StatusBadgeKind.unknown.nsColor, symbolName: nil)
-        ]
-        let visible = items.filter { item in
-            Int(item.text) ?? 0 > 0
+        var items: [BadgeItem] = []
+        func add(_ count: Int, _ color: NSColor, _ symbol: String?) {
+            guard count > 0 else { return }
+            items.append(BadgeItem(text: String(count), color: color, symbolName: symbol))
         }
-        return visible.isEmpty
-            ? [BadgeItem(text: "0", color: StatusBadgeKind.unknown.nsColor, symbolName: nil)]
-            : visible
+        add(summary.jiraWithoutPR, .systemBlue, "link")
+        add(summary.passed, .systemGreen, "checkmark")
+        add(summary.running, .systemOrange, "arrow.triangle.2.circlepath")
+        add(summary.failed, .systemRed, "xmark")
+        add(summary.reviewsPending, .systemPurple, "bubble.left.fill")
+        add(summary.unknown, .systemGray, "questionmark")
+
+        return items.isEmpty
+            ? [BadgeItem(text: "0", color: .systemGray, symbolName: nil)]
+            : items
     }
 
-    private func width(of text: String) -> CGFloat {
+    private var spacing: CGFloat {
+        switch style {
+        case .full: return 4
+        case .compact: return 4
+        case .minimal: return 7
+        }
+    }
+
+    private func itemWidth(_ item: BadgeItem) -> CGFloat {
+        let textWidth = Self.width(of: item.text)
+        switch style {
+        case .full:
+            return 6 + 16 + 5 + textWidth + 9
+        case .compact:
+            return textWidth + 14
+        case .minimal:
+            return 10 + 6 + textWidth
+        }
+    }
+
+    private func drawFull(_ item: BadgeItem, x: CGFloat, width: CGFloat) {
+        let rect = NSRect(x: x, y: 1, width: width, height: barHeight - 2)
+        item.color.withAlphaComponent(0.22).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+
+        let diameter: CGFloat = 16
+        let circle = NSRect(x: rect.minX + 4, y: rect.midY - diameter / 2, width: diameter, height: diameter)
+        item.color.setFill()
+        NSBezierPath(ovalIn: circle).fill()
+        if let symbolName = item.symbolName {
+            drawSymbol(symbolName, in: circle.insetBy(dx: 3.5, dy: 3.5))
+        }
+        drawText(item.text, x: circle.maxX + 5, centerY: rect.midY, fontSize: 12)
+    }
+
+    private func drawCompact(_ item: BadgeItem, x: CGFloat, width: CGFloat) {
+        let height: CGFloat = 16
+        let rect = NSRect(x: x, y: (barHeight - height) / 2, width: width, height: height)
+        item.color.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: height / 2, yRadius: height / 2).fill()
+        drawText(item.text, x: rect.minX + 7, centerY: rect.midY, fontSize: 11)
+    }
+
+    private func drawMinimal(_ item: BadgeItem, x: CGFloat, width: CGFloat) {
+        let diameter: CGFloat = 9
+        let dot = NSRect(x: x, y: (barHeight - diameter) / 2, width: diameter, height: diameter)
+        item.color.setFill()
+        NSBezierPath(ovalIn: dot).fill()
+        drawText(item.text, x: dot.maxX + 6, centerY: dot.midY, fontSize: 12)
+    }
+
+    private func drawText(_ text: String, x: CGFloat, centerY: CGFloat, fontSize: CGFloat) {
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .bold)
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: NSColor.white
+        ]
+        let size = (text as NSString).size(withAttributes: attributes)
+        let rect = NSRect(x: x, y: centerY - size.height / 2, width: size.width + 1, height: size.height)
+        (text as NSString).draw(in: rect, withAttributes: attributes)
+    }
+
+    private func drawSymbol(_ name: String, in rect: NSRect) {
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return }
+        let sizeConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+        let colorConfiguration = NSImage.SymbolConfiguration(paletteColors: [.white])
+        let configured = image.withSymbolConfiguration(sizeConfiguration.applying(colorConfiguration)) ?? image
+        configured.draw(in: rect)
+    }
+
+    static func width(of text: String) -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .bold)
         ]
         return ceil((text as NSString).size(withAttributes: attributes).width)
+    }
+}
+
+@MainActor
+enum BadgePreviewRenderer {
+    struct Entry {
+        let label: String
+        let items: [StatusBadgesNSView.BadgeItem]
+        let style: BadgeDisplayStyle
+    }
+
+    static func sheet(
+        _ entries: [Entry],
+        scale: CGFloat = 3,
+        labelWidth: CGFloat = 112,
+        gap: CGFloat = 10,
+        padding: CGFloat = 18,
+        background: NSColor = NSColor(calibratedWhite: 0.10, alpha: 1)
+    ) -> Data? {
+        let views = entries.map { entry -> StatusBadgesNSView in
+            let view = StatusBadgesNSView(frame: .zero)
+            view.overrideItems = entry.items
+            view.style = entry.style
+            return view
+        }
+        let sizes = views.map(\.intrinsicContentSize)
+        let rowHeight = sizes.map(\.height).max() ?? 22
+        let maxWidth = sizes.map(\.width).max() ?? 24
+        let canvas = NSSize(
+            width: labelWidth + maxWidth + padding * 2,
+            height: CGFloat(entries.count) * rowHeight + CGFloat(max(0, entries.count - 1)) * gap + padding * 2
+        )
+        let pixelWidth = Int((canvas.width * scale).rounded())
+        let pixelHeight = Int((canvas.height * scale).rounded())
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelWidth,
+            pixelsHigh: pixelHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
+            return nil
+        }
+
+        rep.size = canvas
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.cgContext.scaleBy(x: scale, y: scale)
+        background.setFill()
+        NSRect(origin: .zero, size: canvas).fill()
+
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor(calibratedWhite: 0.75, alpha: 1)
+        ]
+
+        for (index, entry) in entries.enumerated() {
+            let y = canvas.height - padding - CGFloat(index + 1) * rowHeight - CGFloat(index) * gap
+            let labelSize = (entry.label as NSString).size(withAttributes: labelAttributes)
+            (entry.label as NSString).draw(
+                at: NSPoint(x: padding, y: y + (rowHeight - labelSize.height) / 2),
+                withAttributes: labelAttributes
+            )
+
+            context.cgContext.saveGState()
+            context.cgContext.translateBy(x: padding + labelWidth, y: y)
+            let view = views[index]
+            view.frame = NSRect(origin: .zero, size: sizes[index])
+            view.draw(view.bounds)
+            context.cgContext.restoreGState()
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    static func pngData(
+        items: [StatusBadgesNSView.BadgeItem],
+        style: BadgeDisplayStyle,
+        scale: CGFloat = 3,
+        padding: CGFloat = 14,
+        background: NSColor = NSColor(calibratedWhite: 0.11, alpha: 1)
+    ) -> Data? {
+        let view = StatusBadgesNSView(frame: .zero)
+        view.overrideItems = items
+        view.style = style
+        let size = view.intrinsicContentSize
+        let canvas = NSSize(width: size.width + padding * 2, height: size.height + padding * 2)
+        let pixelWidth = Int((canvas.width * scale).rounded())
+        let pixelHeight = Int((canvas.height * scale).rounded())
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelWidth,
+            pixelsHigh: pixelHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
+            return nil
+        }
+
+        rep.size = canvas
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.cgContext.scaleBy(x: scale, y: scale)
+        background.setFill()
+        NSRect(origin: .zero, size: canvas).fill()
+        context.cgContext.translateBy(x: padding, y: padding)
+        view.frame = NSRect(origin: .zero, size: size)
+        view.draw(view.bounds)
+        NSGraphicsContext.restoreGraphicsState()
+
+        return rep.representation(using: .png, properties: [:])
     }
 }
 
@@ -202,11 +389,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private var outsideClickMonitor: Any?
     private var githubSummary = StatusSummary.empty
     private var jiraConnectionState: ConnectionState = .needsAuthentication
+    private var jiraIssues: [JiraIssue] = []
+    private(set) var displaySummary = StatusSummary.empty
 
-    init(store: AppStore, jiraStore: JiraStore, theme: ThemeStore, demoMode: Bool = false) {
+    private let appStore: AppStore
+
+    init(store: AppStore, jiraStore: JiraStore, theme: ThemeStore, badgeStyle: BadgeStyleStore, demoMode: Bool = false) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         badgeView = StatusBadgesNSView(frame: NSRect(x: 0, y: 0, width: 22, height: 22))
         popover = NSPopover()
+        appStore = store
         super.init()
 
         if let button = statusItem.button {
@@ -235,6 +427,21 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             }
             .store(in: &cancellables)
 
+        store.$mergedPullRequests
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateBadges()
+            }
+            .store(in: &cancellables)
+
+        jiraStore.$issues
+            .receive(on: RunLoop.main)
+            .sink { [weak self] issues in
+                self?.jiraIssues = issues
+                self?.updateBadges()
+            }
+            .store(in: &cancellables)
+
         jiraStore.$connectionState
             .receive(on: RunLoop.main)
             .sink { [weak self] state in
@@ -243,8 +450,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             }
             .store(in: &cancellables)
 
-        badgeView.summary = store.summary
-        statusItem.length = badgeView.intrinsicContentSize.width
+        badgeStyle.$style
+            .receive(on: RunLoop.main)
+            .sink { [weak self] style in
+                self?.badgeView.style = style
+                self?.statusItem.length = self?.badgeView.intrinsicContentSize.width ?? NSStatusItem.variableLength
+            }
+            .store(in: &cancellables)
+
+        badgeView.style = badgeStyle.style
+        githubSummary = store.summary
+        jiraIssues = jiraStore.issues
+        updateBadges()
     }
 
     func showPopover() {
@@ -271,12 +488,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     private func updateBadges() {
-        var displaySummary = githubSummary
-        displaySummary.hasError = displaySummary.hasError
+        var summary = githubSummary
+        summary.jiraWithoutPR = jiraWithoutPRCount
+        summary.hasError = summary.hasError
             || jiraConnectionState == .error
             || jiraConnectionState == .stale
-        badgeView.summary = displaySummary
+        displaySummary = summary
+        badgeView.summary = summary
         statusItem.length = badgeView.intrinsicContentSize.width
+    }
+
+    /// Open Jira tickets that are not linked to any tracked pull request.
+    private var jiraWithoutPRCount: Int {
+        let pullRequests = appStore.allPullRequests
+        return jiraIssues.filter { issue in
+            TicketPRLinker.pullRequests(for: issue.key, in: pullRequests).isEmpty
+        }.count
     }
 
     private var cancellables: Set<AnyCancellable> = []

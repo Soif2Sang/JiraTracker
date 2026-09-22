@@ -465,13 +465,17 @@ private struct CIIndicator: View {
                 case .success: Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(red: 0.31, green: 0.81, blue: 0.43))
                 case .failure: Image(systemName: "xmark.circle.fill").foregroundStyle(Color(red: 1, green: 0.29, blue: 0.32))
                 case .running:
-                    BrandIcon(asset: .githubActionsRunning, size: 21, color: .yellow)
-                        .rotationEffect(.degrees(runningRotation))
-                        .onAppear {
-                            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                                runningRotation = 360
+                    ZStack {
+                        Circle().fill(Color(red: 1, green: 0.62, blue: 0.04))
+                        BrandIcon(asset: .githubActionsRunning, size: 12, color: .white)
+                            .rotationEffect(.degrees(runningRotation))
+                            .onAppear {
+                                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                                    runningRotation = 360
+                                }
                             }
-                        }
+                    }
+                    .frame(width: 19, height: 19)
                 case .cancelled: Image(systemName: "minus.circle.fill").foregroundStyle(.orange)
                 case .unknown: Image(systemName: "circle.dashed").foregroundStyle(Color.primary.opacity(0.3))
                 }

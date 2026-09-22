@@ -100,7 +100,8 @@ final class JiraStore: ObservableObject {
             ("1250", "Analytics onboarding", "En cours", "In Progress", -720.0),
             ("1242", "Billing service refactor", "En cours", "In Progress", -2_700.0),
             ("1260", "API error handling", "En cours", "In Progress", -3_600.0),
-            ("1287", "Improve logging", "En cours", "In Progress", -7_200.0)
+            ("1287", "Improve logging", "En cours", "In Progress", -7_200.0),
+            ("1301", "Ticket sans PR liée", "En cours", "In Progress", -300.0)
         ]
         issues = fixtures.map { number, summary, status, category, offset in
             JiraIssue(

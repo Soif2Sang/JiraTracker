@@ -16,6 +16,7 @@ struct StatusSummary: Equatable {
     var passed = 0
     var unknown = 0
     var reviewsPending = 0
+    var jiraWithoutPR = 0
     var hasError = false
     var needsAuthentication = false
 

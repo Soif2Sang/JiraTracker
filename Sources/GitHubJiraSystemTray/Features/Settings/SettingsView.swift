@@ -7,9 +7,10 @@ final class AppModel: ObservableObject {
 
     let polling = PollingSettingsStore()
     let integrations = IntegrationSettingsStore()
+    let theme = ThemeStore()
+    let badgeStyle = BadgeStyleStore()
     let store: AppStore
     let jiraStore: JiraStore
-    let theme = ThemeStore()
 
     private init() {
         store = AppStore(polling: polling, integrations: integrations)
@@ -71,9 +72,9 @@ struct SettingsView: View {
     @ObservedObject private var trackingSort: TrackingSortStore
     @ObservedObject private var polling: PollingSettingsStore
     @ObservedObject private var integrations: IntegrationSettingsStore
+    @ObservedObject private var badgeStyle: BadgeStyleStore
     @State private var selectedSection: SettingsSection = .general
     @AppStorage("jira.hiddenWorkflowStatuses") private var hiddenStatusesValue = ""
-    @AppStorage("settings.animationsEnabled") private var animationsEnabled = true
 
     init(model: AppModel, trackingSort: TrackingSortStore, onClose: @escaping () -> Void = {}) {
         self.onClose = onClose
@@ -83,6 +84,7 @@ struct SettingsView: View {
         _trackingSort = ObservedObject(wrappedValue: trackingSort)
         _polling = ObservedObject(wrappedValue: model.polling)
         _integrations = ObservedObject(wrappedValue: model.integrations)
+        _badgeStyle = ObservedObject(wrappedValue: model.badgeStyle)
     }
 
     var body: some View {
@@ -127,7 +129,7 @@ struct SettingsView: View {
                 ForEach(SettingsSection.allCases.filter { $0 != .general }) { section in
                     Button {
                         selectedSection = section
-                        withAnimation(animationsEnabled ? .easeInOut(duration: 0.22) : nil) {
+                        withAnimation(.easeInOut(duration: 0.22)) {
                             proxy.scrollTo(section.anchor, anchor: .top)
                         }
                     } label: {
@@ -196,23 +198,106 @@ struct SettingsView: View {
     private var displayCard: some View {
         settingsCard(
             title: "Affichage",
-            subtitle: "Apparence de l'interface et animations.",
+            subtitle: "Thème de l'interface et style des pastilles de la barre de menus.",
             icon: "display"
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 9) {
-                    ForEach(AppTheme.allCases) { option in
-                        themeButton(option)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Thème")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 9) {
+                        ForEach(AppTheme.allCases) { option in
+                            themeButton(option)
+                        }
                     }
                 }
+
                 Divider()
-                SettingsToggleRow(
-                    title: "Animations",
-                    subtitle: "Activer les animations et transitions.",
-                    isOn: $animationsEnabled
-                )
+
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Style des pastilles")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text("Rendu des états dans la barre de menus.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 9) {
+                        ForEach(BadgeDisplayStyle.allCases) { option in
+                            badgeStyleButton(option)
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private var badgeSampleSummary: StatusSummary {
+        var summary = StatusSummary.empty
+        summary.failed = 1
+        summary.running = 1
+        summary.passed = 3
+        summary.reviewsPending = 4
+        summary.jiraWithoutPR = 1
+        return summary
+    }
+
+    private func badgeStyleButton(_ option: BadgeDisplayStyle) -> some View {
+        let isSelected = badgeStyle.style == option
+        let items = StatusBadgesNSView.items(for: badgeSampleSummary)
+        return Button {
+            badgeStyle.style = option
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Group {
+                    if let data = BadgePreviewRenderer.pngData(items: items, style: option, scale: 2, padding: 7),
+                       let image = NSImage(data: data) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: 24, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(option.title)
+                            .font(.system(size: 12, weight: .medium))
+                        Text(option.subtitle)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    ZStack {
+                        Circle()
+                            .stroke(isSelected ? theme.selection.accent : Color.primary.opacity(0.45), lineWidth: 2)
+                        if isSelected {
+                            Circle()
+                                .fill(theme.selection.accent)
+                                .padding(4)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                }
+            }
+            .foregroundStyle(Color.primary.opacity(0.86))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(isSelected ? theme.selection.accent : Color.primary.opacity(0.12), lineWidth: isSelected ? 1.5 : 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func themeButton(_ option: AppTheme) -> some View {
@@ -471,29 +556,5 @@ struct SettingsView: View {
     private func openNotificationSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") else { return }
         NSWorkspace.shared.open(url)
-    }
-}
-
-private struct SettingsToggleRow: View {
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Toggle("", isOn: $isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(.accentColor)
-        }
-        .frame(minHeight: 38)
     }
 }
