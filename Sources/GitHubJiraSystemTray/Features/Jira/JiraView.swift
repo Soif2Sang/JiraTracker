@@ -50,9 +50,7 @@ struct JiraAuthenticationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Spacer()
-            Image(systemName: "checklist")
-                .font(.system(size: 32))
-                .foregroundStyle(.blue)
+            BrandIcon(asset: .jira, size: 32, color: .blue)
                 .frame(maxWidth: .infinity)
             Text("Connecter Jira")
                 .font(.title3.weight(.semibold))

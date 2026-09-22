@@ -114,6 +114,50 @@ final class AppStore: ObservableObject {
         connectionState = .needsAuthentication
     }
 
+    func loadDemoData() {
+        let statuses: [(CIStatus, Int, String, String, Int, TimeInterval)] = [
+            (.success, 2, "Workspace settings UI", "feature/workspace-settings", 2, -120),
+            (.failure, 5, "Analytics onboarding", "fix/onboarding-analytics", 5, -720),
+            (.success, 1, "Billing service refactor", "refactor/billing-service", 1, -2_700),
+            (.running, 0, "API error handling", "feature/error-handling", 0, -3_600),
+            (.success, 3, "Improve logging", "chore/logging", 3, -7_200)
+        ]
+        pullRequests = statuses.enumerated().map { index, fixture in
+            let run = GitHubWorkflowRun(
+                id: Int64(index + 1),
+                name: "CI",
+                status: fixture.0 == .running ? "in_progress" : "completed",
+                conclusion: fixture.0 == .failure ? "failure" : fixture.0 == .success ? "success" : nil,
+                htmlURL: URL(string: "https://github.com/acme/platform/actions")!,
+                headSHA: "demo-sha-\(index)",
+                runAttempt: 1,
+                createdAt: Date().addingTimeInterval(fixture.5 - 60),
+                updatedAt: Date().addingTimeInterval(fixture.5),
+                jobs: nil
+            )
+            return TrackedPullRequest(
+                id: "acme/platform#\(index + 101)",
+                repository: index == 2 ? "acme/billing" : "acme/platform",
+                number: index + 101,
+                title: fixture.2,
+                url: URL(string: "https://github.com/acme/platform/pull/\(index + 101)")!,
+                branch: fixture.3,
+                headSHA: "demo-sha-\(index)",
+                isDraft: false,
+                body: "PROJ-\([1234, 1250, 1242, 1260, 1287][index])",
+                updatedAt: Date().addingTimeInterval(fixture.5),
+                isMerged: index == 4,
+                workflowRuns: [run],
+                unresolvedReviewThreadCount: fixture.1
+            )
+        }
+        mergedPullRequests = []
+        summary = StatusSummary(pullRequests: pullRequests)
+        lastUpdated = Date().addingTimeInterval(-120)
+        connectionState = .connected
+        errorMessage = nil
+    }
+
     func saveToken() {
         let token = tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {

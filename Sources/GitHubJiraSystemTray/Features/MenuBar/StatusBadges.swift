@@ -203,7 +203,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private var githubSummary = StatusSummary.empty
     private var jiraConnectionState: ConnectionState = .needsAuthentication
 
-    init(store: AppStore, jiraStore: JiraStore) {
+    init(store: AppStore, jiraStore: JiraStore, demoMode: Bool = false) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         badgeView = StatusBadgesNSView(frame: NSRect(x: 0, y: 0, width: 22, height: 22))
         popover = NSPopover()
@@ -218,10 +218,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.addSubview(badgeView)
         }
 
-        popover.behavior = .transient
+        popover.behavior = demoMode ? .applicationDefined : .transient
         popover.animates = true
         popover.delegate = self
-        popover.contentSize = NSSize(width: 430, height: 570)
+        popover.contentSize = NSSize(width: 780, height: 600)
         let hostingController = NSHostingController(rootView: ContentView(store: store, jiraStore: jiraStore))
         hostingController.view.wantsLayer = true
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
@@ -245,6 +245,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
         badgeView.summary = store.summary
         statusItem.length = badgeView.intrinsicContentSize.width
+    }
+
+    func showPopover() {
+        guard !popover.isShown, let button = statusItem.button else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    func capturePopover(to path: String) {
+        guard let view = popover.contentViewController?.view else { return }
+        view.layoutSubtreeIfNeeded()
+        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        guard let data = representation.representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: URL(fileURLWithPath: path))
     }
 
     private func updateBadges() {

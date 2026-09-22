@@ -21,12 +21,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var wakeObserver: Any?
     private let networkMonitor = NWPathMonitor()
     private var networkWasUnavailable = false
+    private let demoMode = ProcessInfo.processInfo.environment["JIRA_TRACKER_DEMO"] == "1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        statusItemController = StatusItemController(store: store, jiraStore: jiraStore)
-        store.start()
-        jiraStore.start()
+        statusItemController = StatusItemController(store: store, jiraStore: jiraStore, demoMode: demoMode)
+        if demoMode {
+            store.loadDemoData()
+            jiraStore.loadDemoData()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.statusItemController?.showPopover()
+                if let path = ProcessInfo.processInfo.environment["JIRA_TRACKER_SCREENSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.statusItemController?.capturePopover(to: path)
+                    }
+                }
+            }
+        } else {
+            store.start()
+            jiraStore.start()
+        }
 
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,

@@ -58,6 +58,35 @@ final class JiraStore: ObservableObject {
         startPolling()
     }
 
+    func loadDemoData() {
+        let fixtures = [
+            ("1234", "Workspace settings UI", "En cours", "In Progress", -120.0),
+            ("1250", "Analytics onboarding", "En cours", "In Progress", -720.0),
+            ("1242", "Billing service refactor", "En cours", "In Progress", -2_700.0),
+            ("1260", "API error handling", "En cours", "In Progress", -3_600.0),
+            ("1287", "Improve logging", "En cours", "In Progress", -7_200.0)
+        ]
+        issues = fixtures.map { number, summary, status, category, offset in
+            JiraIssue(
+                id: number,
+                key: "PROJ-\(number)",
+                selfURL: nil,
+                fields: JiraIssueFields(
+                    summary: summary,
+                    status: JiraStatus(name: status, statusCategory: JiraStatusCategory(key: category)),
+                    priority: JiraNamedValue(name: "Medium"),
+                    issueType: JiraNamedValue(name: "Story"),
+                    updated: ISO8601DateFormatter().string(from: Date().addingTimeInterval(offset))
+                )
+            )
+        }
+        availableStatusNames = ["Ready to dev", "À faire", "Blocked", "En cours", "To review", "To merge", "To QA", "To release", "Terminés"]
+        availablePriorityNames = ["Highest", "High", "Medium", "Low"]
+        lastUpdated = Date().addingTimeInterval(-120)
+        connectionState = .connected
+        errorMessage = nil
+    }
+
     func saveCredentials() {
         let email = emailInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let token = tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
