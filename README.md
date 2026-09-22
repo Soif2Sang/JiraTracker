@@ -4,23 +4,25 @@ Application macOS native de barre de menus pour suivre les PR GitHub ouvertes pa
 
 ## Visuels
 
-### Réglages
+### Vue principale
 
-Thème de l'interface et choix du style des pastilles de la barre de menus.
+Vue unifiée des tickets Jira et de leurs PR, avec statut CI, conversations et filtre **Reviewer**.
 
-![Réglages — Affichage et style des pastilles](docs/settings.png)
+![Vue principale](docs/dashboard.png)
 
 ### Barre de menus
 
 Trois styles de pastilles au choix : **Complet** (pastille + logo + chiffre), **Compact** (pastille colorée avec le chiffre) et **Minimal** (point de couleur + chiffre).
 
+Dans l'ordre : sans PR (bleu) › CI verte › CI en cours › CI en échec › commentaires non résolus (violet) › **à reviewer** (indigo, œil).
+
 ![Styles des pastilles de la barre de menus](docs/menu-bar-badges.png)
 
-### Barre de menus et vue principale
+### Réglages
 
-Barre de menus — dans l'ordre : sans PR (bleu) › CI verte › CI en cours › CI en échec › commentaires non résolus (violet) › **à reviewer** (indigo, œil) — et vue unifiée des tickets Jira et de leurs PR, avec statut CI, conversations et filtre **Reviewer**.
+Thème de l'interface et choix du style des pastilles de la barre de menus.
 
-![Barre de menus et tableau de bord](docs/dashboard.png)
+![Réglages — Affichage et style des pastilles](docs/settings.png)
 
 ## Prérequis
 
