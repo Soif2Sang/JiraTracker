@@ -27,12 +27,13 @@ enum JiraAPIError: LocalizedError {
 }
 
 final class JiraClient {
-    private let baseURL = URL(string: "https://decathlon.atlassian.net")!
+    private let baseURL: URL
     private let email: String
     private let token: String
     private let session: URLSession
 
-    init(email: String, token: String, session: URLSession = .shared) {
+    init(baseURL: URL, email: String, token: String, session: URLSession = .shared) {
+        self.baseURL = baseURL
         self.email = email.trimmingCharacters(in: .whitespacesAndNewlines)
         self.token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         self.session = session
@@ -64,6 +65,13 @@ final class JiraClient {
 
     func currentUser() async throws -> JiraUser {
         try await request(path: "/rest/api/3/myself")
+    }
+
+    func issue(key: String) async throws -> JiraIssue {
+        try await request(
+            path: "/rest/api/3/issue/\(key)",
+            queryItems: [URLQueryItem(name: "fields", value: "summary,status,priority,issuetype,updated")]
+        )
     }
 
     func statuses() async throws -> [JiraStatus] {

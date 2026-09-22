@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -58,8 +59,6 @@ final class AppStore: ObservableObject {
     @Published private(set) var loadingJobsFor: Set<String> = []
     @Published var tokenInput = ""
 
-    let organization = "dktunited"
-
     var allPullRequests: [TrackedPullRequest] {
         pullRequests + mergedPullRequests
     }
@@ -67,19 +66,26 @@ final class AppStore: ObservableObject {
     private let credentials: CredentialStore
     private let cache: LocalCache
     private let notifications: NotificationService
+    private let polling: PollingSettingsStore
+    private let integrations: IntegrationSettingsStore
     private var client: GitHubClient?
     private var pollingTask: Task<Void, Never>?
     @Published private(set) var isRefreshing = false
     private var githubLogin: String?
+    private var cancellables: Set<AnyCancellable> = []
 
     init(
         credentials: CredentialStore = CredentialStore(),
         cache: LocalCache = LocalCache(),
-        notifications: NotificationService = NotificationService()
+        notifications: NotificationService = NotificationService(),
+        polling: PollingSettingsStore,
+        integrations: IntegrationSettingsStore
     ) {
         self.credentials = credentials
         self.cache = cache
         self.notifications = notifications
+        self.polling = polling
+        self.integrations = integrations
 
         if let snapshot = cache.load() {
             pullRequests = snapshot.pullRequests
@@ -88,6 +94,28 @@ final class AppStore: ObservableObject {
             summary = StatusSummary(pullRequests: snapshot.pullRequests)
             connectionState = .stale
         }
+
+        integrations.$githubOrganization
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.organizationDidChange()
+            }
+            .store(in: &cancellables)
+    }
+
+    private var organization: String {
+        integrations.organization
+    }
+
+    private func organizationDidChange() {
+        guard client != nil else { return }
+        githubLogin = nil
+        pullRequests = []
+        mergedPullRequests = []
+        summary = StatusSummary.empty
+        cache.clearGitHub()
+        refreshNow()
     }
 
     deinit {
@@ -305,25 +333,32 @@ final class AppStore: ObservableObject {
         var nextDiscovery = Date.distantPast
 
         while !Task.isCancelled {
-            let shouldDiscover = Date() >= nextDiscovery || pullRequests.isEmpty
-            await refresh(discover: shouldDiscover)
-            if shouldDiscover {
-                nextDiscovery = Date().addingTimeInterval(300)
+            if polling.isEnabled {
+                let shouldDiscover = Date() >= nextDiscovery || pullRequests.isEmpty
+                await refresh(discover: shouldDiscover)
+                if shouldDiscover {
+                    nextDiscovery = Date().addingTimeInterval(polling.discoveryInterval)
+                }
             }
 
-            var interval: UInt64 = pullRequests.contains(where: { $0.ciStatus == .running }) ? 30 : 120
-            if let rateLimit, rateLimit.remaining < 100 {
-                interval = max(interval, 300)
-            }
-            if let rateLimit, rateLimit.remaining == 0, let reset = rateLimit.reset {
-                interval = max(interval, UInt64(max(1, reset.timeIntervalSinceNow)))
-            }
             do {
-                try await Task.sleep(nanoseconds: interval * 1_000_000_000)
+                try await Task.sleep(nanoseconds: UInt64(pollingInterval() * 1_000_000_000))
             } catch {
                 break
             }
         }
+    }
+
+    private func pollingInterval() -> TimeInterval {
+        guard polling.isEnabled else { return 5 }
+        var interval = pullRequests.contains(where: { $0.ciStatus == .running }) ? polling.runningInterval : polling.idleInterval
+        if let rateLimit, rateLimit.remaining < polling.lowRateLimitThreshold {
+            interval = max(interval, polling.lowRateLimitInterval)
+        }
+        if let rateLimit, rateLimit.remaining == 0, let reset = rateLimit.reset {
+            interval = max(interval, max(1, reset.timeIntervalSinceNow))
+        }
+        return interval
     }
 
     private func refresh(discover: Bool) async {

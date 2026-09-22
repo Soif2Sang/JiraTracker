@@ -194,14 +194,8 @@ struct UnifiedView: View {
             return TrackingSortFacts(id: item.id, isMerged: pr.isMerged, smartRank: sortRank(for: item), jiraStatus: nil, jiraPriority: nil, ciStatuses: [pr.ciStatus], pullRequestStates: [pr.isMerged ? .merged : pr.isDraft ? .draft : .open], unresolvedReviewThreads: pr.unresolvedReviewThreadCount, hasPullRequest: true, updatedAt: pr.updatedAt)
         case let .issue(issue):
             let prs = TicketPRLinker.pullRequests(for: issue.key, in: store.allPullRequests)
-            return TrackingSortFacts(id: item.id, isMerged: !prs.isEmpty && prs.allSatisfy(\.isMerged), smartRank: sortRank(for: item), jiraStatus: issue.fields.status?.name, jiraPriority: issue.fields.priority?.name, ciStatuses: prs.map(\.ciStatus), pullRequestStates: prs.isEmpty ? [.none] : prs.map { $0.isMerged ? .merged : $0.isDraft ? .draft : .open }, unresolvedReviewThreads: prs.reduce(0) { $0 + $1.unresolvedReviewThreadCount }, hasPullRequest: !prs.isEmpty, updatedAt: issue.fields.updated.flatMap(parseJiraDate))
+            return TrackingSortFacts(id: item.id, isMerged: !prs.isEmpty && prs.allSatisfy(\.isMerged), smartRank: sortRank(for: item), jiraStatus: issue.fields.status?.name, jiraPriority: issue.fields.priority?.name, ciStatuses: prs.map(\.ciStatus), pullRequestStates: prs.isEmpty ? [.none] : prs.map { $0.isMerged ? .merged : $0.isDraft ? .draft : .open }, unresolvedReviewThreads: prs.reduce(0) { $0 + $1.unresolvedReviewThreadCount }, hasPullRequest: !prs.isEmpty, updatedAt: issue.fields.updatedDate)
         }
-    }
-
-    private func parseJiraDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 }
 
@@ -222,14 +216,14 @@ private struct DashboardWorkItemRow: View {
     private var primaryPR: TrackedPullRequest? { pullRequests.first }
     private var title: String { issue?.fields.summary ?? primaryPR?.title ?? "Sans titre" }
     private var key: String { issue?.key ?? primaryPR.map { "PR #\($0.number)" } ?? "PR" }
-    private var destination: URL { issue?.webURL ?? primaryPR!.url }
+    private var destination: URL { issue.map { jiraStore.webURL(for: $0) } ?? primaryPR!.url }
     private var comments: Int { pullRequests.reduce(0) { $0 + $1.unresolvedReviewThreadCount } }
-    private var updatedAt: Date { primaryPR?.updatedAt ?? issue?.fields.updated.flatMap(ISO8601DateFormatter().date) ?? Date() }
+    private var updatedAt: Date { primaryPR?.updatedAt ?? issue?.fields.updatedDate ?? Date() }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                JiraMark()
+                SourceMark(hasJira: issue != nil, hasGitHub: primaryPR != nil)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
                         Link(key, destination: destination)
@@ -398,14 +392,60 @@ private struct DashboardWorkItemRow: View {
     }
 }
 
-private struct JiraMark: View {
+private struct SourceMark: View {
+    let hasJira: Bool
+    let hasGitHub: Bool
+
+    private let jiraGradient = [Color(red: 0.12, green: 0.48, blue: 1), Color(red: 0, green: 0.28, blue: 0.9)]
+    private let githubGradient = [Color(white: 0.17), Color(white: 0.03)]
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(LinearGradient(colors: [Color(red: 0.12, green: 0.48, blue: 1), Color(red: 0, green: 0.28, blue: 0.9)], startPoint: .topLeading, endPoint: .bottomTrailing))
-            BrandIcon(asset: .jira, size: 22, color: .white)
+            if hasJira && hasGitHub {
+                splitMark
+            } else if hasJira {
+                singleMark(gradient: jiraGradient, asset: .jira)
+            } else if hasGitHub {
+                singleMark(gradient: githubGradient, asset: .github)
+            }
         }
         .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.white.opacity(hasJira && hasGitHub ? 0.22 : 0.12), lineWidth: 0.75)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var splitMark: some View {
+        ZStack {
+            LinearGradient(colors: jiraGradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: githubGradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+                .clipShape(DiagonalSplit())
+            BrandIcon(asset: .jira, size: 15, color: .white)
+                .offset(x: -8, y: 8)
+            BrandIcon(asset: .github, size: 15, color: .white)
+                .offset(x: 8, y: -8)
+        }
+    }
+
+    private func singleMark(gradient: [Color], asset: BrandAsset) -> some View {
+        ZStack {
+            LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
+            BrandIcon(asset: asset, size: 22, color: .white)
+        }
+    }
+}
+
+private struct DiagonalSplit: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 

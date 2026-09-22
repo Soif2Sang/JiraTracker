@@ -6,16 +6,10 @@ enum GitHubJSON {
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = formatter.date(from: value) {
-                return date
+            guard let date = ISO8601Parser.date(from: value) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Date GitHub invalide")
             }
-            formatter.formatOptions = [.withInternetDateTime]
-            if let date = formatter.date(from: value) {
-                return date
-            }
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Date GitHub invalide")
+            return date
         }
         return decoder
     }()

@@ -65,42 +65,7 @@ final class CredentialStore {
 
     /// Reads only simple assignments; it never executes the user's shell configuration.
     func tokenFromEnvironmentOrZshrc() -> String? {
-        if let token = tokenFromEnvironment() {
-            return token
-        }
-
-        let zshrcURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zshrc")
-        guard let contents = try? String(contentsOf: zshrcURL, encoding: .utf8) else {
-            return nil
-        }
-
-        for rawLine in contents.components(separatedBy: .newlines) {
-            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.hasPrefix("#") else { continue }
-            if line.hasPrefix("export ") {
-                line.removeFirst("export ".count)
-            }
-
-            for variable in ["GITHUB_TOKEN", "GH_TOKEN"] {
-                let prefix = "\(variable)="
-                guard line.hasPrefix(prefix) else { continue }
-                let rawValue = String(line.dropFirst(prefix.count))
-                let value: String
-                if rawValue.hasPrefix("\""), let end = rawValue.dropFirst().firstIndex(of: "\"") {
-                    value = String(rawValue[rawValue.index(after: rawValue.startIndex)..<end])
-                } else if rawValue.hasPrefix("'"), let end = rawValue.dropFirst().firstIndex(of: "'") {
-                    value = String(rawValue[rawValue.index(after: rawValue.startIndex)..<end])
-                } else {
-                    value = rawValue.split(separator: "#", maxSplits: 1).first.map(String.init) ?? rawValue
-                }
-                let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !token.isEmpty, !token.hasPrefix("$") {
-                    return token
-                }
-            }
-        }
-
-        return nil
+        shellValue(for: ["GITHUB_TOKEN", "GH_TOKEN"])
     }
 
     func readJiraToken() -> String? {
@@ -123,7 +88,7 @@ final class CredentialStore {
     }
 
     func jiraTokenFromEnvironmentOrZshrc() -> String? {
-        valueFromEnvironmentOrZshrc(names: [
+        shellValue(for: [
             "JIRA_TOKEN",
             "JIRA_API_TOKEN",
             "JIRA_API_KEY",
@@ -134,7 +99,7 @@ final class CredentialStore {
     }
 
     func jiraEmailFromEnvironmentOrZshrc() -> String? {
-        valueFromEnvironmentOrZshrc(names: [
+        shellValue(for: [
             "JIRA_EMAIL",
             "ATLASSIAN_EMAIL",
             "ATLASSIAN_ACCOUNT_EMAIL"
@@ -185,7 +150,8 @@ final class CredentialStore {
         SecItemDelete(query as CFDictionary)
     }
 
-    private func valueFromEnvironmentOrZshrc(names: [String]) -> String? {
+    /// Returns the first non-empty value found in the process environment, then in `~/.zshrc`.
+    private func shellValue(for names: [String]) -> String? {
         let environment = ProcessInfo.processInfo.environment
         for name in names {
             if let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
@@ -193,31 +159,43 @@ final class CredentialStore {
             }
         }
 
-        let zshrcURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zshrc")
         guard let contents = try? String(contentsOf: zshrcURL, encoding: .utf8) else { return nil }
         for rawLine in contents.components(separatedBy: .newlines) {
-            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.hasPrefix("#") else { continue }
-            if line.hasPrefix("export ") {
-                line.removeFirst("export ".count)
+            guard let assignment = parseAssignment(rawLine),
+                  names.contains(where: { $0.caseInsensitiveCompare(assignment.name) == .orderedSame }) else {
+                continue
             }
-            guard let equalsIndex = line.firstIndex(of: "=") else { continue }
-            let variable = line[..<equalsIndex].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard names.contains(where: { $0.caseInsensitiveCompare(variable) == .orderedSame }) else { continue }
-            let rawValue = String(line[line.index(after: equalsIndex)...])
-            let value: String
-            if rawValue.hasPrefix("\""), let end = rawValue.dropFirst().firstIndex(of: "\"") {
-                value = String(rawValue.dropFirst()[..<end])
-            } else if rawValue.hasPrefix("'"), let end = rawValue.dropFirst().firstIndex(of: "'") {
-                value = String(rawValue.dropFirst()[..<end])
-            } else {
-                value = rawValue.split(separator: "#", maxSplits: 1).first.map(String.init) ?? rawValue
-            }
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty, !trimmed.hasPrefix("$") {
-                return trimmed
+            let value = unquotedValue(assignment.value).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty, !value.hasPrefix("$") {
+                return value
             }
         }
         return nil
+    }
+
+    private var zshrcURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zshrc")
+    }
+
+    private func parseAssignment(_ rawLine: String) -> (name: String, value: String)? {
+        var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.hasPrefix("#") else { return nil }
+        if line.hasPrefix("export ") {
+            line.removeFirst("export ".count)
+        }
+        guard let equalsIndex = line.firstIndex(of: "=") else { return nil }
+        let name = line[..<equalsIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = String(line[line.index(after: equalsIndex)...])
+        return (String(name), value)
+    }
+
+    private func unquotedValue(_ rawValue: String) -> String {
+        if rawValue.hasPrefix("\""), let end = rawValue.dropFirst().firstIndex(of: "\"") {
+            return String(rawValue.dropFirst()[..<end])
+        }
+        if rawValue.hasPrefix("'"), let end = rawValue.dropFirst().firstIndex(of: "'") {
+            return String(rawValue.dropFirst()[..<end])
+        }
+        return rawValue.split(separator: "#", maxSplits: 1).first.map(String.init) ?? rawValue
     }
 }

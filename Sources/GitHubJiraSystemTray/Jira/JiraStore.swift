@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 
@@ -20,23 +21,40 @@ final class JiraStore: ObservableObject {
         didSet { UserDefaults.standard.set(jql, forKey: "jira.jql") }
     }
 
-    let baseURL = URL(string: "https://decathlon.atlassian.net")!
-
     private let credentials: CredentialStore
     private let cache: LocalCache
+    private let polling: PollingSettingsStore
+    private let integrations: IntegrationSettingsStore
     private var client: JiraClient?
     private var pollingTask: Task<Void, Never>?
     @Published private(set) var isRefreshing = false
+    private var refreshRequested = false
+    private var cancellables: Set<AnyCancellable> = []
 
-    init(credentials: CredentialStore = CredentialStore(), cache: LocalCache = LocalCache()) {
+    init(
+        credentials: CredentialStore = CredentialStore(),
+        cache: LocalCache = LocalCache(),
+        polling: PollingSettingsStore,
+        integrations: IntegrationSettingsStore
+    ) {
         self.credentials = credentials
         self.cache = cache
+        self.polling = polling
+        self.integrations = integrations
         jql = UserDefaults.standard.string(forKey: "jira.jql") ?? Self.defaultJQL
         if let snapshot = cache.loadJira() {
             issues = snapshot.issues
             lastUpdated = snapshot.savedAt
             connectionState = .stale
         }
+
+        integrations.$jiraSiteURL
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyStoredCredentials(reset: true)
+            }
+            .store(in: &cancellables)
     }
 
     deinit {
@@ -44,18 +62,36 @@ final class JiraStore: ObservableObject {
     }
 
     func start() {
+        applyStoredCredentials(reset: false)
+    }
+
+    private func applyStoredCredentials(reset: Bool) {
         let token = credentials.readJiraToken() ?? credentials.jiraTokenFromEnvironmentOrZshrc()
         let email = credentials.readJiraEmail() ?? credentials.jiraEmailFromEnvironmentOrZshrc()
         tokenInput = token ?? ""
         emailInput = email ?? ""
 
-        guard let token, let email, !token.isEmpty, !email.isEmpty else {
+        guard let token, let email, !token.isEmpty, !email.isEmpty, let baseURL = integrations.jiraBaseURL else {
             connectionState = .needsAuthentication
             return
         }
 
-        configure(email: email, token: token)
+        if reset {
+            issues = []
+            transitionsByIssueKey = [:]
+            availableStatusNames = []
+            lastUpdated = nil
+            cache.clearJira()
+        }
+
+        configure(baseURL: baseURL, email: email, token: token)
         startPolling()
+    }
+
+    /// Web URL of an issue, based on the configured Atlassian site.
+    func webURL(for issue: JiraIssue) -> URL {
+        let baseURL = integrations.jiraBaseURL ?? URL(string: IntegrationSettingsStore.defaultJiraSite)!
+        return baseURL.appendingPathComponent("browse").appendingPathComponent(issue.key)
     }
 
     func loadDemoData() {
@@ -94,11 +130,16 @@ final class JiraStore: ObservableObject {
             errorMessage = "L'e-mail Atlassian et l'API token Jira sont requis."
             return
         }
+        guard let baseURL = integrations.jiraBaseURL else {
+            connectionState = .needsAuthentication
+            errorMessage = "L'URL du site Atlassian est invalide. Corrigez-la dans les réglages."
+            return
+        }
         errorMessage = nil
         connectionState = .loading
         Task { [weak self] in
             guard let self else { return }
-            let validatingClient = JiraClient(email: email, token: token)
+            let validatingClient = JiraClient(baseURL: baseURL, email: email, token: token)
             do {
                 _ = try await validatingClient.currentUser()
                 guard self.credentials.saveJiraCredentials(email: email, token: token) else {
@@ -144,7 +185,6 @@ final class JiraStore: ObservableObject {
     }
 
     func refreshNow() {
-        guard !isRefreshing else { return }
         Task { [weak self] in
             await self?.refresh()
         }
@@ -173,7 +213,7 @@ final class JiraStore: ObservableObject {
             do {
                 try await client.transition(issueKey: issueKey, transitionID: transitionID)
                 transitionsByIssueKey[issueKey] = nil
-                await refresh()
+                await reloadIssue(key: issueKey, client: client)
             } catch {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
@@ -181,8 +221,22 @@ final class JiraStore: ObservableObject {
         }
     }
 
-    private func configure(email: String, token: String) {
-        client = JiraClient(email: email, token: token)
+    /// Reloads a single issue so a transition is reflected even while a poll refresh is running.
+    private func reloadIssue(key: String, client: JiraClient) async {
+        guard let updated = try? await client.issue(key: key) else {
+            await refresh()
+            return
+        }
+        if let index = issues.firstIndex(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) {
+            issues[index] = updated
+            cache.saveJira(JiraCacheSnapshot(issues: issues, savedAt: lastUpdated ?? Date()))
+        } else {
+            await refresh()
+        }
+    }
+
+    private func configure(baseURL: URL, email: String, token: String) {
+        client = JiraClient(baseURL: baseURL, email: email, token: token)
         connectionState = .loading
     }
 
@@ -195,9 +249,12 @@ final class JiraStore: ObservableObject {
 
     private func pollingLoop() async {
         while !Task.isCancelled {
-            await refresh()
+            if polling.isEnabled {
+                await refresh()
+            }
+            let interval = polling.isEnabled ? polling.jiraInterval : 5
             do {
-                try await Task.sleep(nanoseconds: 180 * 1_000_000_000)
+                try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             } catch {
                 break
             }
@@ -205,13 +262,23 @@ final class JiraStore: ObservableObject {
     }
 
     private func refresh() async {
-        guard let client, !isRefreshing else { return }
+        guard let client else { return }
+        if isRefreshing {
+            refreshRequested = true
+            return
+        }
         isRefreshing = true
-        defer { isRefreshing = false }
+        repeat {
+            refreshRequested = false
+            await performRefresh(using: client)
+        } while refreshRequested && !Task.isCancelled
+        isRefreshing = false
+    }
 
+    private func performRefresh(using client: JiraClient) async {
         do {
             issues = try await client.searchIssues(jql: jql)
-                .sorted { ($0.fields.updated ?? "") > ($1.fields.updated ?? "") }
+                .sorted { ($0.fields.updatedDate ?? .distantPast) > ($1.fields.updatedDate ?? .distantPast) }
             let projectKeys = Set(issues.compactMap { issue in
                 issue.key.split(separator: "-", maxSplits: 1).first.map(String.init)
             })

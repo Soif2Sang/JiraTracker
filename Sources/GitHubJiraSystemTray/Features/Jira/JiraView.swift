@@ -98,7 +98,7 @@ struct JiraIssueRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
-                Link(destination: issue.webURL) {
+                Link(destination: store.webURL(for: issue)) {
                     Text(issue.key)
                         .font(.caption.weight(.bold))
                 }

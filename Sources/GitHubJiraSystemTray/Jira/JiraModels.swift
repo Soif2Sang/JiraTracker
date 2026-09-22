@@ -16,10 +16,6 @@ struct JiraIssue: Codable, Equatable, Identifiable {
     let selfURL: URL?
     let fields: JiraIssueFields
 
-    var webURL: URL {
-        URL(string: "https://decathlon.atlassian.net/browse/\(key)")!
-    }
-
     enum CodingKeys: String, CodingKey {
         case id
         case key
@@ -41,6 +37,12 @@ struct JiraIssueFields: Codable, Equatable {
         case priority
         case issueType = "issuetype"
         case updated
+    }
+}
+
+extension JiraIssueFields {
+    var updatedDate: Date? {
+        updated.flatMap(ISO8601Parser.date(from:))
     }
 }
 

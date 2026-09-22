@@ -356,7 +356,7 @@ struct ContentView: View {
         case .pullRequests: return store.pullRequests.count
         case .jira: return jiraStore.issues.count
         case .sorting: return trackingSort.criteria.count
-        case .categories: return allJiraStatusNames.count - hiddenStatuses.count
+        case .categories: return allJiraStatusNames.count - statusVisibility.hidden.count
         }
     }
 
@@ -381,18 +381,9 @@ struct ContentView: View {
         }
     }
 
-    private var allJiraStatusNames: [String] {
-        var result: [String] = []
-        let names = jiraStore.availableStatusNames + jiraStore.issues.compactMap { $0.fields.status?.name }
-        for name in names where !result.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-            result.append(name)
-        }
-        return result
-    }
+    private var allJiraStatusNames: [String] { JiraStatusCatalog.names(for: jiraStore) }
 
-    private var hiddenStatuses: Set<String> {
-        Set(hiddenStatusesValue.split(separator: "|").map(String.init))
-    }
+    private var statusVisibility: JiraStatusVisibility { JiraStatusVisibility(rawValue: hiddenStatusesValue) }
 
     private var visibleDashboardFilters: [DashboardFilter] {
         [.all] + allJiraStatusNames
@@ -400,22 +391,16 @@ struct ContentView: View {
             .map { DashboardFilter(statusName: $0) }
     }
 
-    private func isStatusHidden(_ status: String) -> Bool {
-        hiddenStatuses.contains { $0.caseInsensitiveCompare(status) == .orderedSame }
-    }
+    private func isStatusHidden(_ status: String) -> Bool { statusVisibility.isHidden(status) }
 
     private func setStatusHidden(_ status: String, _ hidden: Bool) {
-        var statuses = hiddenStatuses
-        if hidden {
-            statuses.insert(status)
-            if selectedFilter.statusName?.caseInsensitiveCompare(status) == .orderedSame {
-                selectedFilter = .all
-                selectedSection = .overview
-            }
-        } else {
-            statuses = Set(statuses.filter { $0.caseInsensitiveCompare(status) != .orderedSame })
+        var visibility = statusVisibility
+        visibility.set(status, hidden: hidden)
+        hiddenStatusesValue = visibility.rawValue
+        if hidden, selectedFilter.statusName?.caseInsensitiveCompare(status) == .orderedSame {
+            selectedFilter = .all
+            selectedSection = .overview
         }
-        hiddenStatusesValue = statuses.sorted().joined(separator: "|")
     }
 
     private var lastUpdatedLabel: String {

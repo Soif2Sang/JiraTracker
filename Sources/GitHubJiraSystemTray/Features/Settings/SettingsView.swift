@@ -5,17 +5,23 @@ import SwiftUI
 final class AppModel: ObservableObject {
     static let shared = AppModel()
 
-    let store = AppStore()
-    let jiraStore = JiraStore()
+    let polling = PollingSettingsStore()
+    let integrations = IntegrationSettingsStore()
+    let store: AppStore
+    let jiraStore: JiraStore
     let theme = ThemeStore()
 
-    private init() {}
+    private init() {
+        store = AppStore(polling: polling, integrations: integrations)
+        jiraStore = JiraStore(polling: polling, integrations: integrations)
+    }
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case display
     case notifications
+    case polling
     case integrations
     case filters
     case categories
@@ -27,6 +33,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "Général"
         case .notifications: return "Notifications"
+        case .polling: return "Polling & API"
         case .integrations: return "Intégrations"
         case .filters: return "Filtres & Suivi"
         case .categories: return "Catégories"
@@ -39,6 +46,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .notifications: return "bell"
+        case .polling: return "arrow.triangle.2.circlepath"
         case .integrations: return "link"
         case .filters: return "slider.horizontal.3"
         case .categories: return "square.grid.2x2"
@@ -61,6 +69,8 @@ struct SettingsView: View {
     @ObservedObject private var jiraStore: JiraStore
     @ObservedObject private var theme: ThemeStore
     @ObservedObject private var trackingSort: TrackingSortStore
+    @ObservedObject private var polling: PollingSettingsStore
+    @ObservedObject private var integrations: IntegrationSettingsStore
     @State private var selectedSection: SettingsSection = .general
     @AppStorage("jira.hiddenWorkflowStatuses") private var hiddenStatusesValue = ""
     @AppStorage("settings.animationsEnabled") private var animationsEnabled = true
@@ -71,6 +81,8 @@ struct SettingsView: View {
         _jiraStore = ObservedObject(wrappedValue: model.jiraStore)
         _theme = ObservedObject(wrappedValue: model.theme)
         _trackingSort = ObservedObject(wrappedValue: trackingSort)
+        _polling = ObservedObject(wrappedValue: model.polling)
+        _integrations = ObservedObject(wrappedValue: model.integrations)
     }
 
     var body: some View {
@@ -152,71 +164,27 @@ struct SettingsView: View {
 
     private var settingsDocument: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                documentHeader(
-                    title: "Général",
-                    subtitle: "Paramètres généraux de l'application.",
-                    icon: "gearshape"
-                )
-                .id(SettingsSection.general.anchor)
-
-                appearanceCard
+            LazyVStack(alignment: .leading, spacing: 16) {
+                displayCard
                     .id(SettingsSection.display.anchor)
 
-                settingsCard(
-                    title: "Comportement",
-                    subtitle: "Préférez votre expérience de travail.",
-                    icon: "gearshape.2"
-                ) {
-                    SettingsToggleRow(
-                        title: "Animations",
-                        subtitle: "Activer les animations et transitions.",
-                        isOn: $animationsEnabled
-                    )
-                }
-
-                sectionTitle("Notifications", subtitle: "Choisissez quand l'application doit vous avertir.", icon: "bell")
-                    .id(SettingsSection.notifications.anchor)
                 notificationsCard
+                    .id(SettingsSection.notifications.anchor)
 
-                sectionTitle("Intégrations", subtitle: "Gérez les connexions GitHub et Jira Cloud.", icon: "link")
+                pollingCard
+                    .id(SettingsSection.polling.anchor)
+
+                integrationsCard
                     .id(SettingsSection.integrations.anchor)
-                integrationsCards
 
-                sectionTitle("Filtres & Suivi", subtitle: "Organisez les éléments affichés dans le suivi.", icon: "slider.horizontal.3")
+                filtersCard
                     .id(SettingsSection.filters.anchor)
-                settingsCard(
-                    title: "Filtres et ordre",
-                    subtitle: "Configurez la priorité des éléments du tableau de bord.",
-                    icon: "slider.horizontal.3"
-                ) {
-                    TrackingSortSettingsView(
-                        sortStore: trackingSort,
-                        issues: jiraStore.issues,
-                        availableStatuses: jiraStore.availableStatusNames,
-                        availablePriorities: jiraStore.availablePriorityNames,
-                        embedded: true
-                    )
-                }
 
-                sectionTitle("Catégories", subtitle: "Choisissez les catégories visibles dans le suivi.", icon: "square.grid.2x2")
+                categoriesCard
                     .id(SettingsSection.categories.anchor)
-                settingsCard(
-                    title: "Catégories Jira",
-                    subtitle: "Sélectionnez les statuts affichés dans la barre latérale.",
-                    icon: "square.grid.2x2"
-                ) {
-                    WorkflowCategorySettingsView(
-                        statusNames: allJiraStatusNames,
-                        isHidden: isStatusHidden,
-                        setHidden: setStatusHidden,
-                        embedded: true
-                    )
-                }
 
-                sectionTitle("À propos", subtitle: "Informations sur GitHub Jira Tracker.", icon: "info.circle")
-                    .id(SettingsSection.about.anchor)
                 aboutCard
+                    .id(SettingsSection.about.anchor)
             }
             .padding(.horizontal, 18)
             .padding(.top, 18)
@@ -225,89 +193,67 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func documentHeader(title: String, subtitle: String, icon: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 27, weight: .light))
-                .foregroundStyle(Color(red: 0.70, green: 0.79, blue: 0.94))
-                .frame(width: 38)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.bottom, 2)
-    }
-
-    private func sectionTitle(_ title: String, subtitle: String, icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(theme.selection.accent)
-                .frame(width: 25)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold))
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.top, 8)
-    }
-
-    private var appearanceCard: some View {
+    private var displayCard: some View {
         settingsCard(
-            title: "Apparence",
-            subtitle: "Choisissez l'apparence de l'interface.",
+            title: "Affichage",
+            subtitle: "Apparence de l'interface et animations.",
             icon: "display"
         ) {
-            HStack(spacing: 9) {
-                ForEach(AppTheme.allCases) { option in
-                    Button {
-                        guard theme.selection != option else { return }
-                        theme.selection = option
-                    } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: themeIcon(option))
-                                .font(.system(size: 17, weight: .regular))
-                            Text(themeTitle(option))
-                                .font(.system(size: 12, weight: .medium))
-                            Spacer()
-                            ZStack {
-                                Circle()
-                                    .stroke(theme.selection == option ? theme.selection.accent : Color.primary.opacity(0.45), lineWidth: 2)
-                                if theme.selection == option {
-                                    Circle()
-                                        .fill(theme.selection.accent)
-                                        .padding(4)
-                                }
-                            }
-                            .frame(width: 18, height: 18)
-                        }
-                        .foregroundStyle(Color.primary.opacity(0.86))
-                        .padding(.horizontal, 13)
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                        .contentShape(Rectangle())
-                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 9)
-                                .stroke(theme.selection == option ? theme.selection.accent : Color.primary.opacity(0.12), lineWidth: theme.selection == option ? 1.5 : 1)
-                        }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 9) {
+                    ForEach(AppTheme.allCases) { option in
+                        themeButton(option)
                     }
-                    .buttonStyle(.plain)
                 }
+                Divider()
+                SettingsToggleRow(
+                    title: "Animations",
+                    subtitle: "Activer les animations et transitions.",
+                    isOn: $animationsEnabled
+                )
             }
         }
+    }
+
+    private func themeButton(_ option: AppTheme) -> some View {
+        Button {
+            guard theme.selection != option else { return }
+            theme.selection = option
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: themeIcon(option))
+                    .font(.system(size: 17, weight: .regular))
+                Text(themeTitle(option))
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                ZStack {
+                    Circle()
+                        .stroke(theme.selection == option ? theme.selection.accent : Color.primary.opacity(0.45), lineWidth: 2)
+                    if theme.selection == option {
+                        Circle()
+                            .fill(theme.selection.accent)
+                            .padding(4)
+                    }
+                }
+                .frame(width: 18, height: 18)
+            }
+            .foregroundStyle(Color.primary.opacity(0.86))
+            .padding(.horizontal, 13)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(Rectangle())
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(theme.selection == option ? theme.selection.accent : Color.primary.opacity(0.12), lineWidth: theme.selection == option ? 1.5 : 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var notificationsCard: some View {
         settingsCard(
             title: "Notifications",
-            subtitle: "Recevez les changements importants de CI.",
+            subtitle: "Choisissez quand l'application doit vous avertir.",
             icon: "bell.badge"
         ) {
             HStack(spacing: 10) {
@@ -326,44 +272,49 @@ struct SettingsView: View {
         }
     }
 
-    private var integrationsCards: some View {
-        VStack(spacing: 12) {
-            settingsCard(
-                title: "GitHub",
-                subtitle: "Identifiants et connexion GitHub.",
-                icon: "chevron.left.forwardslash.chevron.right"
-            ) {
-                VStack(spacing: 12) {
-                    AuthenticationView(store: store, compact: true)
-                    if store.connectionState != .needsAuthentication {
-                        Divider()
-                        HStack {
-                            Text("Session GitHub active")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Déconnecter", role: .destructive) { store.disconnect() }
-                                .buttonStyle(.bordered)
+    private var pollingCard: some View {
+        settingsCard(
+            title: "Polling & API",
+            subtitle: "Fréquence d'actualisation et quota GitHub.",
+            icon: "arrow.triangle.2.circlepath"
+        ) {
+            PollingSettingsView(polling: polling, store: store, jiraStore: jiraStore)
+        }
+    }
+
+    private var integrationsCard: some View {
+        settingsCard(
+            title: "Intégrations",
+            subtitle: "Gérez les connexions GitHub et Jira Cloud.",
+            icon: "link"
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                integrationBlock(title: "Sources", icon: "globe") {
+                    SourcesSettingsView(integrations: integrations)
+                }
+                Divider()
+                integrationBlock(title: "GitHub", icon: "chevron.left.forwardslash.chevron.right") {
+                    if store.connectionState == .needsAuthentication {
+                        AuthenticationView(store: store, compact: true)
+                    } else {
+                        connectionRow(
+                            title: "Session GitHub active",
+                            subtitle: store.connectionState == .stale ? "Données conservées hors ligne." : nil
+                        ) {
+                            store.disconnect()
                         }
                     }
                 }
-            }
-            settingsCard(
-                title: "Jira Cloud",
-                subtitle: "Identifiants et connexion Atlassian.",
-                icon: "link"
-            ) {
-                VStack(spacing: 12) {
-                    JiraAuthenticationView(store: jiraStore, compact: true)
-                    if jiraStore.connectionState != .needsAuthentication {
-                        Divider()
-                        HStack {
-                            Text("Session Jira active")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Déconnecter", role: .destructive) { jiraStore.disconnect() }
-                                .buttonStyle(.bordered)
+                Divider()
+                integrationBlock(title: "Jira Cloud", icon: "link") {
+                    if jiraStore.connectionState == .needsAuthentication {
+                        JiraAuthenticationView(store: jiraStore, compact: true)
+                    } else {
+                        connectionRow(
+                            title: "Session Jira active",
+                            subtitle: jiraStore.connectionState == .stale ? "Données conservées hors ligne." : nil
+                        ) {
+                            jiraStore.disconnect()
                         }
                     }
                 }
@@ -371,10 +322,78 @@ struct SettingsView: View {
         }
     }
 
+    private func integrationBlock<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(0.82))
+            content()
+        }
+    }
+
+    private var filtersCard: some View {
+        settingsCard(
+            title: "Filtres & Suivi",
+            subtitle: "Organisez les éléments affichés dans le suivi.",
+            icon: "slider.horizontal.3"
+        ) {
+            TrackingSortSettingsView(
+                sortStore: trackingSort,
+                issues: jiraStore.issues,
+                availableStatuses: jiraStore.availableStatusNames,
+                availablePriorities: jiraStore.availablePriorityNames,
+                embedded: true
+            )
+        }
+    }
+
+    private var categoriesCard: some View {
+        settingsCard(
+            title: "Catégories",
+            subtitle: "Choisissez les catégories visibles dans le suivi.",
+            icon: "square.grid.2x2"
+        ) {
+            WorkflowCategorySettingsView(
+                statusNames: allJiraStatusNames,
+                isHidden: isStatusHidden,
+                setHidden: setStatusHidden,
+                embedded: true
+            )
+        }
+    }
+
+    private func connectionRow(
+        title: String,
+        subtitle: String?,
+        disconnect: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("Déconnecter", role: .destructive, action: disconnect)
+                .buttonStyle(.bordered)
+        }
+    }
+
     private var aboutCard: some View {
         settingsCard(
-            title: "GitHub Jira Tracker",
-            subtitle: "Application macOS native de barre de menus.",
+            title: "À propos",
+            subtitle: "Informations sur GitHub Jira Tracker.",
             icon: "info.circle"
         ) {
             VStack(alignment: .leading, spacing: 6) {
@@ -437,31 +456,16 @@ struct SettingsView: View {
         }
     }
 
-    private var allJiraStatusNames: [String] {
-        var result: [String] = []
-        let names = jiraStore.availableStatusNames + jiraStore.issues.compactMap { $0.fields.status?.name }
-        for name in names where !result.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-            result.append(name)
-        }
-        return result
-    }
+    private var allJiraStatusNames: [String] { JiraStatusCatalog.names(for: jiraStore) }
 
-    private var hiddenStatuses: Set<String> {
-        Set(hiddenStatusesValue.split(separator: "|").map(String.init))
-    }
+    private var statusVisibility: JiraStatusVisibility { JiraStatusVisibility(rawValue: hiddenStatusesValue) }
 
-    private func isStatusHidden(_ status: String) -> Bool {
-        hiddenStatuses.contains { $0.caseInsensitiveCompare(status) == .orderedSame }
-    }
+    private func isStatusHidden(_ status: String) -> Bool { statusVisibility.isHidden(status) }
 
     private func setStatusHidden(_ status: String, _ hidden: Bool) {
-        var statuses = hiddenStatuses
-        if hidden {
-            statuses.insert(status)
-        } else {
-            statuses = Set(statuses.filter { $0.caseInsensitiveCompare(status) != .orderedSame })
-        }
-        hiddenStatusesValue = statuses.sorted().joined(separator: "|")
+        var visibility = statusVisibility
+        visibility.set(status, hidden: hidden)
+        hiddenStatusesValue = visibility.rawValue
     }
 
     private func openNotificationSettings() {
