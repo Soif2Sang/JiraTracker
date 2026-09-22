@@ -1,112 +1,115 @@
 # GitHub Jira Tracker
 
-Application macOS native de barre de menus pour suivre les PR GitHub ouvertes par l'utilisateur dans `dktunited`, leur CI GitHub Actions, les tickets Jira associés et les tickets dont l'utilisateur est **Code Reviewer**.
+Native macOS menu bar app to track the GitHub pull requests opened by the user in `dktunited`, their GitHub Actions CI, the related Jira tickets, and the tickets where the user is the **Code Reviewer**.
 
-## Visuels
+## Screenshots
 
-### Vue principale
+### Main view
 
-Vue unifiée des tickets Jira et de leurs PR, avec statut CI, conversations et filtre **Reviewer**.
+Unified view of Jira tickets and their PRs, with CI status, conversations and a **Reviewer** filter.
 
-![Vue principale](docs/dashboard.png)
+![Main view](docs/dashboard.png)
 
-### Barre de menus
+### Menu bar
 
-Trois styles de pastilles au choix : **Complet** (pastille + logo + chiffre), **Compact** (pastille colorée avec le chiffre) et **Minimal** (point de couleur + chiffre).
+Three badge styles: **Full** (pill + logo + number), **Compact** (colored pill with the number) and **Minimal** (color dot + number).
 
-Dans l'ordre : sans PR (bleu) › CI verte › CI en cours › CI en échec › commentaires non résolus (violet) › **à reviewer** (indigo, œil).
+Order: no PR (blue) › CI passed › CI running › CI failed › unresolved comments (purple) › unknown (gray) › **to review** (indigo, eye).
 
-![Styles des pastilles de la barre de menus](docs/menu-bar-badges.png)
+![Menu bar badge styles](docs/menu-bar-badges.png)
 
-### Réglages
+### Settings
 
-Thème de l'interface et choix du style des pastilles de la barre de menus.
+Interface theme and menu bar badge style.
 
-![Réglages — Affichage et style des pastilles](docs/settings.png)
+![Settings — Appearance and badge style](docs/settings.png)
 
-## Prérequis
+## Requirements
 
-- macOS 13 ou supérieur ;
-- Swift 6 ou Xcode 15+ ;
-- Git ;
-- un fine-grained GitHub PAT autorisé par `dktunited` avec `Metadata: Read`, `Pull requests: Read` et `Actions: Read`.
+- macOS 13 or later;
+- Swift 6 toolchain (Xcode 16+);
+- Git;
+- a fine-grained GitHub PAT allowed by `dktunited` with `Metadata: Read`, `Pull requests: Read`, `Actions: Read` and `Checks: Read`.
 
-Vérifier l'installation de Swift :
+Check your Swift installation:
 
 ```sh
 swift --version
 ```
 
-## Installation locale
+## Local setup
 
-Cloner le dépôt puis se placer à sa racine :
+Clone the repository and move to its root:
 
 ```sh
-git clone <URL_DU_DEPOT>
+git clone <REPO_URL>
 cd github-jira-system-tray
 ```
 
-Les dépendances Swift sont récupérées automatiquement par Swift Package Manager lors de la première compilation.
+Swift dependencies are fetched automatically by Swift Package Manager on the first build.
 
-## Lancer en développement
+## Running the app
 
-Pour compiler et lancer directement depuis le terminal :
+The app must run from a macOS app bundle: `UserNotifications` requires a bundle, so launching the bare binary (for example `swift run` or `.build/debug/GitHubJiraSystemTray`) crashes immediately with `bundleProxyForCurrentProcess is nil`.
 
-```sh
-swift run
-```
-
-L'application s'exécute dans la barre de menus et n'affiche pas de fenêtre dans le Dock. Arrêter le processus avec `Ctrl+C`.
-
-Pour lancer avec les variables d'environnement GitHub et Jira :
-
-```sh
-export GITHUB_TOKEN="github_pat_..."
-export JIRA_EMAIL="prenom.nom@decathlon.com"
-export JIRA_TOKEN="..."
-swift run
-```
-
-L'application vérifie aussi `GH_TOKEN`. Pour Jira, les noms `JIRA_API_TOKEN`, `JIRA_API_KEY`, `JIRA_PAT`, `ATLASSIAN_API_TOKEN` et `ATLASSIAN_TOKEN` sont également reconnus pour le token. Les tokens validés sont copiés dans le Keychain macOS et ne sont pas écrits dans le cache.
-
-Le bouton d'authentification peut aussi lire une affectation simple `GITHUB_TOKEN=...` ou `export GITHUB_TOKEN=...` dans `~/.zshrc`, sans exécuter le shell.
-
-## Mode démo
-
-Pour visualiser l'interface sans configurer GitHub ni Jira (données factices, aucun appel réseau) :
-
-```sh
-sh Scripts/demo.sh
-```
-
-Variables utiles : `JIRA_TRACKER_THEME=white|black|blue` pour forcer le thème et `JIRA_TRACKER_SCREENSHOT=/tmp/pop.png` (ou `JIRA_TRACKER_SETTINGS_SCREENSHOT`, `JIRA_TRACKER_BADGES_SCREENSHOT`) pour exporter des captures. L'application doit être lancée depuis le bundle `dist/GitHub Jira Tracker.app`, pas le binaire seul.
-
-## Compiler
-
-Compiler en mode debug sans lancer l'application :
-
-```sh
-swift build
-```
-
-Compiler en mode release :
-
-```sh
-swift build -c release
-```
-
-Le binaire est alors disponible dans `.build/release/GitHubJiraSystemTray`.
-
-## Construire et lancer l'application macOS
-
-Le script suivant compile en release, crée `dist/GitHub Jira Tracker.app` et lui applique une signature ad hoc locale :
+Build the bundle and open it:
 
 ```sh
 sh Scripts/build-app.sh
 open "dist/GitHub Jira Tracker.app"
 ```
 
-La signature locale est nécessaire pour certaines notifications macOS. L'application n'est ni notarisée ni distribuable telle quelle à d'autres utilisateurs.
+The app runs in the menu bar and shows no window in the Dock. Quit it from the footer or run `pkill -f GitHubJiraSystemTray`.
+
+To pass GitHub and Jira environment variables, launch the bundle binary directly:
+
+```sh
+export GITHUB_TOKEN="github_pat_..."
+export JIRA_EMAIL="first.last@example.com"
+export JIRA_TOKEN="..."
+env "dist/GitHub Jira Tracker.app/Contents/MacOS/GitHubJiraSystemTray"
+```
+
+The app also reads `GH_TOKEN`. For Jira, `JIRA_API_TOKEN`, `JIRA_API_KEY`, `JIRA_PAT`, `ATLASSIAN_API_TOKEN` and `ATLASSIAN_TOKEN` are also recognized for the token. Validated tokens are stored in the macOS Keychain and are never written to the cache.
+
+The authentication button can also read a simple `GITHUB_TOKEN=...` or `export GITHUB_TOKEN=...` assignment from `~/.zshrc`, without executing the shell.
+
+## Demo mode
+
+To explore the UI without configuring GitHub or Jira (fake data, no network calls):
+
+```sh
+sh Scripts/demo.sh
+```
+
+Useful variables: `JIRA_TRACKER_THEME=white|black|blue` to force a theme, and `JIRA_TRACKER_SCREENSHOT=/tmp/pop.png` (or `JIRA_TRACKER_SETTINGS_SCREENSHOT`, `JIRA_TRACKER_BADGES_SCREENSHOT`) to export screenshots.
+
+## Build
+
+Build in debug mode without running the app:
+
+```sh
+swift build
+```
+
+Build in release mode:
+
+```sh
+swift build -c release
+```
+
+The binary is then available at `.build/release/GitHubJiraSystemTray`.
+
+## Build and run the macOS app
+
+The script below builds in release, creates `dist/GitHub Jira Tracker.app` and applies a local ad-hoc signature:
+
+```sh
+sh Scripts/build-app.sh
+open "dist/GitHub Jira Tracker.app"
+```
+
+The local signature is required for some macOS notifications. The app is not notarized and is not distributable as-is to other users.
 
 ## Tests
 
@@ -114,28 +117,29 @@ La signature locale est nécessaire pour certaines notifications macOS. L'applic
 swift test
 ```
 
-Les tests utilisent Swift Testing comme dépendance de développement afin de fonctionner avec les Command Line Tools seuls.
+Tests use Swift Testing as a development dependency so they can run with the Command Line Tools alone.
 
-## Dépannage
+## Troubleshooting
 
-- Si `swift` est introuvable, installer Xcode ou les Command Line Tools, puis relancer `xcode-select --install`.
-- Si l'application semble ne pas démarrer avec `swift run`, vérifier la barre de menus : elle est configurée comme application sans icône Dock.
-- Si Jira ou GitHub ne répond pas, vérifier les variables d'environnement, les permissions du token et l'accès réseau.
-- Pour repartir d'une compilation propre, supprimer `.build/` puis relancer `swift build`.
+- If `swift` is not found, install Xcode or the Command Line Tools, then run `xcode-select --install`.
+- If running the bare binary crashes with `bundleProxyForCurrentProcess is nil`, launch the app from the bundle instead (see above).
+- If the app seems not to start, check the menu bar: it is configured as an app without a Dock icon.
+- If Jira or GitHub does not respond, check the environment variables, the token permissions and network access.
+- For a clean build, delete `.build/` and run `swift build` again.
 
-## État actuel
+## Features
 
-Le suivi GitHub et Jira est implémenté : découverte des PR, suivi GitHub Actions par SHA, détail lazy des jobs, conversations de review, pastilles chiffrées, caches locaux, polling adaptatif, Keychain et notifications macOS. La vue principale regroupe les tickets assignés, les tickets dont l'utilisateur est Code Reviewer et leurs PR, et signale les données périmées. Les icônes de statut sont des SVG Lucide (ISC) rendus dans les couleurs de l'application.
+GitHub and Jira tracking is implemented: PR discovery, GitHub Actions tracking by SHA, lazy job details, review conversations, numbered badges, local caches, adaptive polling, Keychain and macOS notifications. The main view groups assigned tickets, tickets where the user is Code Reviewer and their PRs, and flags stale data. Status icons are Lucide SVGs (ISC) rendered in the app colors.
 
-### Suivi du reviewer
+### Reviewer tracking
 
-Les tickets où l'utilisateur est renseigné dans le champ Jira **Code Reviewer** (`customfield_11268`) et positionnés dans un statut de review (ex. `To Review`) sont suivis via une requête Jira dédiée. Pour chacun, l'application interroge l'API dev-status de Jira (intégration GitHub) pour retrouver la PR liée, puis l'API GraphQL de GitHub pour inspecter les conversations de review.
+Tickets where the user is set in the Jira **Code Reviewer** field (`customfield_11268`) and sitting in a review status (for example `To Review`) are tracked through the configurable Jira JQL (default clause `cf[11268] = currentUser()`). For each one, the app queries the Jira dev-status API (GitHub integration) to find the linked PR, then the GitHub GraphQL API to inspect the review conversations.
 
-Le ticket est retenu dans la barre de menus (badge œil indigo) uniquement lorsque la branche est prête **et** qu'une action de review reste à faire :
+The ticket is kept in the menu bar (indigo eye badge) only when the branch is ready **and** a review action remains:
 
-- la PR liée n'est pas un *draft* et ses checks ne sont pas en échec ou en cours ;
-- soit l'utilisateur n'a encore rien commenté (review à faire), soit tous ses threads de review sont résolus.
+- the linked PR is not a *draft* and its checks are neither failing nor running;
+- either the user has not commented yet (review to do), or all of their review threads are resolved.
 
-Le ticket est masqué tant que ses threads ne sont pas résolus (l'auteur doit traiter les retours), et sort du suivi dès qu'il quitte le statut `To Review`. Un filtre **Reviewer** dans la barre latérale, ainsi qu'un repère sur chaque ligne, permettent de retrouver ces tickets dans la vue unifiée.
+The ticket is hidden while its threads are unresolved (the author must address the feedback), and leaves the tracking as soon as it exits the `To Review` status. A **Reviewer** filter in the sidebar, plus a marker on each row, helps find these tickets in the unified view.
 
-L'entrée `Ordre du suivi…` du menu permet de composer un tri multi-critères. Les statuts Jira sont découverts dynamiquement dans les workflows de chaque projet présent dans le suivi, et les priorités sont chargées depuis Jira. Les états CI GitHub et les états ouverte, draft, fusionnée ou sans PR peuvent être ordonnés séparément. La configuration est appliquée en direct et conservée dans les préférences locales.
+Sorting is configured in **Settings › Filters & Tracking**: a multi-criteria sort can be composed. Jira statuses are discovered dynamically from the workflows of each tracked project, and priorities are loaded from Jira. GitHub CI states and the open, draft, merged or no-PR states can be ordered separately. The configuration is applied live and kept in the local preferences.
