@@ -489,6 +489,16 @@ struct SettingsView: View {
                 Text("Version 0.1.0")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.primary.opacity(0.5))
+                Link(destination: URL(string: "https://github.com/Soif2Sang/JiraTracker")!) {
+                    HStack(spacing: 5) {
+                        BrandIcon(asset: .github, size: 12, color: Color(red: 0.28, green: 0.68, blue: 1))
+                        Text("github.com/Soif2Sang/JiraTracker")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(Color(red: 0.28, green: 0.68, blue: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
             }
         }
     }
