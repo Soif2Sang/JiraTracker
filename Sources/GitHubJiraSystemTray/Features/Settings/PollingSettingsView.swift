@@ -153,7 +153,10 @@ struct PollingSettingsView: View {
         let value = Int(seconds.rounded())
         if value < 60 { return "\(value) s" }
         let minutes = value / 60
-        if minutes < 60 { return "\(minutes) min" }
+        if minutes < 60 {
+            let remainingSeconds = value % 60
+            return remainingSeconds == 0 ? "\(minutes) min" : "\(minutes) min \(remainingSeconds) s"
+        }
         let hours = minutes / 60
         let remainingMinutes = minutes % 60
         return remainingMinutes == 0 ? "\(hours) h" : "\(hours) h \(remainingMinutes) min"

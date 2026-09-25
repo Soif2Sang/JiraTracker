@@ -24,7 +24,7 @@ final class PollingSettingsStore: ObservableObject {
         static let enabled = true
         static let discovery: Double = 300
         static let running: Double = 30
-        static let idle: Double = 120
+        static let idle: Double = 60
         static let lowRateLimit: Double = 300
         static let lowRateLimitThreshold = 100
         static let jira: Double = 180
