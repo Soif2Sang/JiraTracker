@@ -228,8 +228,11 @@ struct LinkedPullRequestRow: View {
 
             if isExpanded && !pullRequest.isMerged {
                 Divider()
-                WorkflowDetails(pullRequest: pullRequest)
-                    .padding(.leading, 4)
+                WorkflowDetails(
+                    pullRequest: pullRequest,
+                    isLoading: githubStore.loadingJobsFor.contains(pullRequest.id)
+                )
+                .padding(.leading, 4)
             }
         }
         .padding(.leading, 6)
@@ -272,7 +275,7 @@ struct LinkedPullRequestRow: View {
     private func toggleExpansion() {
         isExpanded.toggle()
         if isExpanded {
-            githubStore.loadJobs(for: pullRequest.id)
+            githubStore.loadDetails(for: pullRequest.id)
         }
     }
 }

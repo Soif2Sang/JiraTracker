@@ -120,7 +120,10 @@ struct PullRequestCard: View {
                         .font(.caption)
                     }
                 }
-                WorkflowDetails(pullRequest: pullRequest)
+                WorkflowDetails(
+                    pullRequest: pullRequest,
+                    isLoading: store.loadingJobsFor.contains(pullRequest.id)
+                )
             }
         }
         .padding(8)
@@ -203,13 +206,27 @@ struct ReviewCommentBadge: View {
 
 struct WorkflowDetails: View {
     let pullRequest: TrackedPullRequest
+    var isLoading: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if pullRequest.workflowRuns.isEmpty {
-                Text("Aucun workflow GitHub Actions pour ce commit.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if isLoading {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Chargement des jobs...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(pullRequest.checks?.isEmpty ?? true
+                         ? "Aucun check pour ce commit."
+                         : "Checks du commit : \(pullRequest.ciStatus.title).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Link("Voir les checks sur GitHub", destination: pullRequest.url.appendingPathComponent("checks"))
+                        .font(.caption)
+                }
             } else {
                 ForEach(pullRequest.workflowRuns) { run in
                     WorkflowRunRow(run: run)

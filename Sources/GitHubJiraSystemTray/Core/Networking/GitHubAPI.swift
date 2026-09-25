@@ -78,11 +78,16 @@ final class GitHubClient {
         self.session = session
     }
 
+    /// GraphQL `viewer` replaces `GET /user`.
     func currentUser() async throws -> GitHubUser {
-        try await request(path: "/user")
+        let payload: GitHubViewerPayload = try await graphQLRequest(
+            query: "query { viewer { login } }",
+            variables: [:]
+        )
+        return GitHubUser(login: payload.viewer.login)
     }
 
-    func openPullRequests(author: String, organization: String) async throws -> [GitHubSearchPullRequest] {
+    func openPullRequests(author: String, organization: String) async throws -> [GitHubDiscoveredPullRequest] {
         try await searchPullRequests(query: "is:pr is:open author:\(author) org:\(organization)")
     }
 
@@ -90,7 +95,7 @@ final class GitHubClient {
         author: String,
         organization: String,
         since: Date
-    ) async throws -> [GitHubSearchPullRequest] {
+    ) async throws -> [GitHubDiscoveredPullRequest] {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -102,34 +107,62 @@ final class GitHubClient {
         )
     }
 
-    private func searchPullRequests(query: String) async throws -> [GitHubSearchPullRequest] {
-        var results: [GitHubSearchPullRequest] = []
-        var page = 1
+    /// GraphQL search replaces `GET /search/issues`, returning PR metadata and head ref in one call.
+    private func searchPullRequests(query: String) async throws -> [GitHubDiscoveredPullRequest] {
+        var results: [GitHubDiscoveredPullRequest] = []
+        var cursor: String?
 
         repeat {
-            let response: GitHubSearchResponse = try await request(
-                path: "/search/issues",
-                queryItems: [
-                    URLQueryItem(name: "q", value: query),
-                    URLQueryItem(name: "sort", value: "updated"),
-                    URLQueryItem(name: "order", value: "desc"),
-                    URLQueryItem(name: "per_page", value: "100"),
-                    URLQueryItem(name: "page", value: String(page))
-                ]
+            let payload: GitHubSearchPullRequestsPayload = try await graphQLRequest(
+                query: """
+                query($query: String!, $cursor: String) {
+                  search(query: $query, type: ISSUE, first: 100, after: $cursor) {
+                    nodes {
+                      ... on PullRequest {
+                        number
+                        title
+                        url
+                        body
+                        updatedAt
+                        isDraft
+                        mergedAt
+                        repository { nameWithOwner }
+                        headRefName
+                        headRefOid
+                      }
+                    }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
+                """,
+                variables: ["query": query, "cursor": cursor.map { $0 as Any } ?? NSNull()]
             )
-            results.append(contentsOf: response.items)
-            page += 1
 
-            if response.items.count < 100 || page > 10 {
-                break
+            for node in payload.search.nodes {
+                guard let number = node.number,
+                      let title = node.title,
+                      let url = node.url,
+                      let repository = node.repository,
+                      let headRefName = node.headRefName,
+                      let headRefOid = node.headRefOid else { continue }
+                results.append(GitHubDiscoveredPullRequest(
+                    number: number,
+                    repositoryFullName: repository.nameWithOwner,
+                    title: title,
+                    url: url,
+                    body: node.body,
+                    updatedAt: node.updatedAt ?? Date(),
+                    isDraft: node.isDraft ?? false,
+                    headRefName: headRefName,
+                    headRefOid: headRefOid,
+                    mergedAt: node.mergedAt
+                ))
             }
-        } while true
+
+            cursor = payload.search.pageInfo.hasNextPage ? payload.search.pageInfo.endCursor : nil
+        } while cursor != nil
 
         return results
-    }
-
-    func pullRequest(owner: String, repository: String, number: Int) async throws -> GitHubPullRequest {
-        try await request(path: "/repos/\(owner)/\(repository)/pulls/\(number)")
     }
 
     func workflowRuns(owner: String, repository: String, headSHA: String) async throws -> [GitHubWorkflowRun] {
@@ -208,6 +241,209 @@ final class GitHubClient {
             unresolvedCount: unresolvedCount,
             latestCommentAt: latestCommentAt
         )
+    }
+
+    /// Fetches review-thread counts and CI checks for many pull requests in a single GraphQL call.
+    ///
+    /// Replaces the per-pull-request `reviewThreadSummary` + `workflowRuns` fan-out during polling,
+    /// keeping the REST rate-limit budget untouched. Identities missing from the result could not be
+    /// fetched (they should keep their previously known values).
+    func pullRequestSummaries(_ refs: [GitHubPullRequestRef]) async throws -> [String: GitHubPullRequestSummary] {
+        guard !refs.isEmpty else { return [:] }
+
+        let maxPerRequest = 50
+        guard refs.count > maxPerRequest else {
+            return try await pullRequestSummariesChunk(refs)
+        }
+
+        var merged: [String: GitHubPullRequestSummary] = [:]
+        for start in stride(from: 0, to: refs.count, by: maxPerRequest) {
+            let chunk = Array(refs[start..<min(start + maxPerRequest, refs.count)])
+            // A failing chunk only leaves its identities missing, so they keep their previous values.
+            if let partial = try? await pullRequestSummariesChunk(chunk) {
+                merged.merge(partial) { _, new in new }
+            }
+        }
+        return merged
+    }
+
+    private func pullRequestSummariesChunk(_ refs: [GitHubPullRequestRef]) async throws -> [String: GitHubPullRequestSummary] {
+        var variableDeclarations: [String] = []
+        var variables: [String: Any] = [:]
+        var fragments: [String] = []
+
+        for (index, ref) in refs.enumerated() {
+            variableDeclarations.append("$owner\(index): String!")
+            variableDeclarations.append("$repo\(index): String!")
+            variableDeclarations.append("$number\(index): Int!")
+            variableDeclarations.append("$sha\(index): GitObjectID!")
+            variables["owner\(index)"] = ref.owner
+            variables["repo\(index)"] = ref.repository
+            variables["number\(index)"] = ref.number
+            variables["sha\(index)"] = ref.headSHA
+            fragments.append("""
+            pr\(index): repository(owner: $owner\(index), name: $repo\(index)) {
+              pullRequest(number: $number\(index)) {
+                reviewThreads(first: 50) {
+                  nodes { isResolved comments(last: 1) { nodes { createdAt } } }
+                  pageInfo { hasNextPage }
+                }
+              }
+              object(oid: $sha\(index)) {
+                ... on Commit {
+                  statusCheckRollup {
+                    state
+                    contexts(first: 100) {
+                      nodes {
+                        __typename
+                        ... on CheckRun {
+                          name
+                          status
+                          conclusion
+                          detailsUrl
+                          isRequired(pullRequestNumber: $number\(index))
+                          checkSuite { app { slug } }
+                        }
+                        ... on StatusContext {
+                          context
+                          state
+                          targetUrl
+                          isRequired(pullRequestNumber: $number\(index))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """)
+        }
+
+        let query = "query(\(variableDeclarations.joined(separator: ", "))) {\n\(fragments.joined(separator: "\n"))\n}"
+        let payload: GitHubBatchedSummariesPayload = try await graphQLRequest(query: query, variables: variables)
+
+        var summaries: [String: GitHubPullRequestSummary] = [:]
+        for (index, ref) in refs.enumerated() {
+            guard let node = payload.nodes[index], let reviewThreads = node.pullRequest?.reviewThreads else { continue }
+
+            var unresolvedCount = reviewThreads.nodes.filter { !$0.isResolved }.count
+            var latestCommentAt = reviewThreads.nodes
+                .compactMap { $0.comments.nodes.first?.createdAt }
+                .max()
+
+            // A single page is usually enough; fall back to the paginated query for very chatty PRs.
+            if reviewThreads.pageInfo.hasNextPage,
+               let full = try? await reviewThreadSummary(
+                   owner: ref.owner,
+                   repository: ref.repository,
+                   number: ref.number
+               ) {
+                unresolvedCount = full.unresolvedCount
+                latestCommentAt = full.latestCommentAt
+            }
+
+            let rollup = node.object?.statusCheckRollup
+            let contexts = rollup?.contexts.nodes ?? []
+            let normalized = contexts.enumerated().compactMap { offset, context in
+                Self.normalize(context: context, index: offset)
+            }
+            let checks = Self.selectedChecks(
+                all: normalized.map(\.check),
+                required: normalized.filter(\.isRequired).map(\.check),
+                actions: normalized.filter(\.isActions).map(\.check),
+                aggregate: rollup?.state,
+                identity: ref.identity
+            )
+
+            summaries[ref.identity] = GitHubPullRequestSummary(
+                identity: ref.identity,
+                unresolvedReviewThreadCount: unresolvedCount,
+                latestReviewCommentAt: latestCommentAt,
+                checks: checks
+            )
+        }
+
+        return summaries
+    }
+
+    /// Picks the checks that actually represent the pull request CI, in order of preference:
+    ///
+    /// 1. the checks enforced by branch protection/rulesets, matching what GitHub blocks a merge on;
+    /// 2. otherwise, every GitHub Actions check run — the build/tests users mean by "CI";
+    /// 3. otherwise, fall back to every check (aggregate `state` backfills truncated contexts).
+    ///
+    /// Third-party checks (SonarCloud, Wiz, …) that are neither required nor part of an Actions
+    /// workflow no longer turn a green PR red.
+    static func selectedChecks(
+        all: [GitHubCheck],
+        required: [GitHubCheck],
+        actions: [GitHubCheck],
+        aggregate: String?,
+        identity: String
+    ) -> [GitHubCheck] {
+        if !required.isEmpty { return required }
+        if !actions.isEmpty { return actions }
+        return reconciling(checks: all, aggregate: aggregate, identity: identity)
+    }
+
+    /// The aggregate `state` is free (scalar) and covers checks truncated beyond the first page.
+    /// A synthetic check is only appended when the truncated list would report a different outcome.
+    static func reconciling(checks: [GitHubCheck], aggregate: String?, identity: String) -> [GitHubCheck] {
+        guard let aggregate = aggregate?.uppercased() else { return checks }
+        let current = CIStatusReducer.status(for: checks)
+        switch aggregate {
+        case "FAILURE", "ERROR":
+            guard current != .failure else { return checks }
+            return checks + [GitHubCheck(id: "aggregate:\(identity)", name: "Checks", status: "completed", conclusion: "failure", url: nil)]
+        case "PENDING", "EXPECTED":
+            guard current != .failure, current != .running else { return checks }
+            return checks + [GitHubCheck(id: "aggregate:\(identity)", name: "Checks", status: "in_progress", conclusion: nil, url: nil)]
+        case "SUCCESS":
+            guard current == .unknown else { return checks }
+            return checks + [GitHubCheck(id: "aggregate:\(identity)", name: "Checks", status: "completed", conclusion: "success", url: nil)]
+        default:
+            return checks
+        }
+    }
+
+    /// Normalizes a GraphQL check union member to the lowercase vocabulary used by `CIStatusReducer`,
+    /// keeping track of whether the check is required by branch protection and whether it comes from
+    /// a GitHub Actions workflow.
+    private static func normalize(
+        context: GitHubBatchedSummariesPayload.Node.Context,
+        index: Int
+    ) -> (check: GitHubCheck, isRequired: Bool, isActions: Bool)? {
+        let isRequired = context.isRequired ?? false
+        let isActions = context.checkSuite?.app?.slug == "github-actions"
+        switch context.typename {
+        case "CheckRun":
+            guard let name = context.name else { return nil }
+            return (GitHubCheck(
+                id: "check:\(index):\(name)",
+                name: name,
+                status: context.status?.lowercased(),
+                conclusion: context.conclusion?.lowercased(),
+                url: context.detailsUrl
+            ), isRequired, isActions)
+        case "StatusContext":
+            guard let name = context.context else { return nil }
+            let normalized: (status: String?, conclusion: String?)
+            switch context.state?.uppercased() {
+            case "SUCCESS": normalized = ("completed", "success")
+            case "FAILURE", "ERROR": normalized = ("completed", "failure")
+            case "PENDING", "EXPECTED": normalized = ("in_progress", nil)
+            default: normalized = (nil, nil)
+            }
+            return (GitHubCheck(
+                id: "status:\(index):\(name)",
+                name: name,
+                status: normalized.status,
+                conclusion: normalized.conclusion,
+                url: context.targetUrl
+            ), isRequired, false)
+        default:
+            return nil
+        }
     }
 
     /// Review threads of a pull request that the given login participated in, with resolution state.

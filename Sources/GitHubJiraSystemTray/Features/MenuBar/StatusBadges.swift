@@ -602,6 +602,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 self?.popover.performClose(nil)
             }
         }
+        refreshIfStale()
+    }
+
+    /// Refresh on open so the popover never shows stale CI statuses (e.g. an "unknown"
+    /// workflow run that started after the last poll).
+    private func refreshIfStale() {
+        let threshold: TimeInterval = 15
+        let now = Date()
+        if appStore.lastUpdated.map({ now.timeIntervalSince($0) > threshold }) ?? true {
+            appStore.refreshNow()
+        }
+        if jiraStore.lastUpdated.map({ now.timeIntervalSince($0) > threshold }) ?? true {
+            jiraStore.refreshNow()
+        }
     }
 
     func popoverDidClose(_ notification: Notification) {

@@ -302,9 +302,12 @@ private struct DashboardWorkItemRow: View {
 
             if isExpanded, let pullRequest = primaryPR, !pullRequest.isMerged {
                 Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
-                WorkflowDetails(pullRequest: pullRequest)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                WorkflowDetails(
+                    pullRequest: pullRequest,
+                    isLoading: store.loadingJobsFor.contains(pullRequest.id)
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
         }
     }
@@ -325,7 +328,7 @@ private struct DashboardWorkItemRow: View {
         if let pullRequest = primaryPR, !pullRequest.isMerged {
             Button {
                 isExpanded.toggle()
-                if isExpanded { store.loadJobs(for: pullRequest.id) }
+                if isExpanded { store.loadDetails(for: pullRequest.id) }
             } label: {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .semibold))

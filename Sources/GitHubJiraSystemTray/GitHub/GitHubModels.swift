@@ -98,6 +98,139 @@ struct GitHubReviewThreadSummary: Equatable {
     let latestCommentAt: Date?
 }
 
+/// A single CI check attached to a commit, normalized from a GitHub GraphQL
+/// `CheckRun` or `StatusContext` so it shares the same vocabulary as `GitHubWorkflowRun`.
+struct GitHubCheck: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let status: String?
+    let conclusion: String?
+    let url: URL?
+}
+
+/// Reference to a pull request used to batch several summaries in one GraphQL call.
+struct GitHubPullRequestRef: Equatable {
+    let identity: String
+    let owner: String
+    let repository: String
+    let number: Int
+    let headSHA: String
+}
+
+/// Review-thread and CI-check summary for a single pull request, fetched in batch.
+struct GitHubPullRequestSummary: Equatable {
+    let identity: String
+    let unresolvedReviewThreadCount: Int
+    let latestReviewCommentAt: Date?
+    let checks: [GitHubCheck]
+}
+
+/// Dynamic top-level GraphQL payload keyed by alias (`pr0`, `pr1`, …).
+struct GitHubBatchedSummariesPayload: Decodable {
+    let nodes: [Int: Node]
+
+    struct Node: Decodable {
+        let pullRequest: PullRequest?
+        let object: GitObject?
+
+        struct PullRequest: Decodable {
+            let reviewThreads: ReviewThreads
+        }
+
+        struct GitObject: Decodable {
+            let statusCheckRollup: StatusCheckRollup?
+        }
+
+        struct ReviewThreads: Decodable {
+            let nodes: [Thread]
+            let pageInfo: PageInfo
+
+            struct Thread: Decodable {
+                let isResolved: Bool
+                let comments: Comments
+
+                struct Comments: Decodable {
+                    let nodes: [Comment]
+                }
+
+                struct Comment: Decodable {
+                    let createdAt: Date
+                }
+            }
+
+            struct PageInfo: Decodable {
+                let hasNextPage: Bool
+            }
+        }
+
+        struct StatusCheckRollup: Decodable {
+            let state: String?
+            let contexts: Contexts
+        }
+
+        struct Contexts: Decodable {
+            let nodes: [Context]
+        }
+
+        struct Context: Decodable {
+            let typename: String
+            let name: String?
+            let status: String?
+            let conclusion: String?
+            let detailsUrl: URL?
+            let context: String?
+            let state: String?
+            let targetUrl: URL?
+            /// Whether this check is required by the base branch protection rules (or rulesets).
+            let isRequired: Bool?
+            /// The check suite that produced this check run, used to tell GitHub Actions apart
+            /// from third-party apps (SonarCloud, Wiz, …).
+            let checkSuite: CheckSuite?
+
+            enum CodingKeys: String, CodingKey {
+                case typename = "__typename"
+                case name
+                case status
+                case conclusion
+                case detailsUrl
+                case context
+                case state
+                case targetUrl
+                case isRequired
+                case checkSuite
+            }
+
+            struct CheckSuite: Decodable {
+                let app: App?
+
+                struct App: Decodable {
+                    let slug: String?
+                }
+            }
+        }
+    }
+
+    private struct DynamicKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { Int(stringValue) }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { self.stringValue = String(intValue) }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        var nodes: [Int: Node] = [:]
+        for key in container.allKeys {
+            guard key.stringValue.hasPrefix("pr"),
+                  let index = Int(key.stringValue.dropFirst(2)) else { continue }
+            if let node = try? container.decode(Node.self, forKey: key) {
+                nodes[index] = node
+            }
+        }
+        self.nodes = nodes
+    }
+}
+
 /// Review threads on a pull request, restricted to the ones the given login took part in.
 struct GitHubReviewThreadState: Equatable {
     let myThreadCount: Int
@@ -139,96 +272,59 @@ struct GitHubUser: Codable, Equatable {
     let login: String
 }
 
-struct GitHubRepositoryReference: Codable, Equatable {
-    let fullName: String
+struct GitHubViewerPayload: Decodable {
+    let viewer: Viewer
 
-    enum CodingKeys: String, CodingKey {
-        case fullName = "full_name"
+    struct Viewer: Decodable {
+        let login: String
     }
 }
 
-struct GitHubSearchPullRequest: Codable, Equatable, Identifiable {
-    let id: Int64
+/// A pull request discovered via GraphQL search, carrying enough metadata to build
+/// a `TrackedPullRequest` without any additional REST call.
+struct GitHubDiscoveredPullRequest: Equatable {
     let number: Int
+    let repositoryFullName: String
     let title: String
-    let htmlURL: URL
-    let updatedAt: Date
-    let repository: GitHubRepositoryReference?
-    let repositoryURL: URL?
+    let url: URL
     let body: String?
-    let pullRequest: GitHubSearchPullRequestMetadata?
+    let updatedAt: Date
+    let isDraft: Bool
+    let headRefName: String
+    let headRefOid: String
+    let mergedAt: Date?
 
-    var mergedAt: Date? {
-        pullRequest?.mergedAt
-    }
+    var identity: String { "\(repositoryFullName)#\(number)" }
+}
 
-    var repositoryFullName: String? {
-        if let repository {
-            return repository.fullName
+struct GitHubSearchPullRequestsPayload: Decodable {
+    let search: Search
+
+    struct Search: Decodable {
+        let nodes: [Node]
+        let pageInfo: PageInfo
+
+        struct Node: Decodable {
+            let number: Int?
+            let title: String?
+            let url: URL?
+            let body: String?
+            let updatedAt: Date?
+            let isDraft: Bool?
+            let mergedAt: Date?
+            let repository: Repository?
+            let headRefName: String?
+            let headRefOid: String?
+
+            struct Repository: Decodable {
+                let nameWithOwner: String
+            }
         }
-        guard let repositoryURL else { return nil }
-        let components = repositoryURL.path.split(separator: "/").map(String.init)
-        guard components.count >= 3, components[0] == "repos" else { return nil }
-        return "\(components[1])/\(components[2])"
-    }
 
-    var identity: String {
-        "\(repositoryFullName ?? "unknown")#\(number)"
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case number
-        case title
-        case htmlURL = "html_url"
-        case updatedAt = "updated_at"
-        case repository
-        case repositoryURL = "repository_url"
-        case body
-        case pullRequest = "pull_request"
-    }
-}
-
-struct GitHubSearchResponse: Decodable {
-    let items: [GitHubSearchPullRequest]
-}
-
-struct GitHubSearchPullRequestMetadata: Codable, Equatable {
-    let mergedAt: Date?
-
-    enum CodingKeys: String, CodingKey {
-        case mergedAt = "merged_at"
-    }
-}
-
-struct GitHubBranch: Codable, Equatable {
-    let ref: String
-    let sha: String
-}
-
-struct GitHubPullRequest: Codable, Equatable, Identifiable {
-    let id: Int64
-    let number: Int
-    let title: String
-    let htmlURL: URL
-    let draft: Bool?
-    let body: String?
-    let updatedAt: Date
-    let head: GitHubBranch
-    let repository: GitHubRepositoryReference?
-    let mergedAt: Date?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case number
-        case title
-        case htmlURL = "html_url"
-        case draft
-        case body
-        case updatedAt = "updated_at"
-        case head
-        case repository
-        case mergedAt = "merged_at"
+        struct PageInfo: Decodable {
+            let hasNextPage: Bool
+            let endCursor: String?
+        }
     }
 }
 
@@ -347,9 +443,12 @@ struct TrackedPullRequest: Codable, Equatable, Identifiable {
     var workflowRuns: [GitHubWorkflowRun]
     var unresolvedReviewThreadCount: Int
     var latestReviewCommentAt: Date?
+    var checks: [GitHubCheck]?
 
     var ciStatus: CIStatus {
-        CIStatusReducer.status(for: workflowRuns)
+        if let checks, !checks.isEmpty { return CIStatusReducer.status(for: checks) }
+        if !workflowRuns.isEmpty { return CIStatusReducer.status(for: workflowRuns) }
+        return .unknown
     }
 
     var failedJobCount: Int {
@@ -360,9 +459,23 @@ struct TrackedPullRequest: Codable, Equatable, Identifiable {
     }
 
     var primaryWorkflowURL: URL? {
-        workflowRuns.first(where: { ["failure", "timed_out", "action_required"].contains($0.conclusion) })?.htmlURL
-            ?? workflowRuns.first(where: { ["queued", "in_progress", "waiting", "requested", "pending"].contains($0.status) })?.htmlURL
-            ?? workflowRuns.first?.htmlURL
+        if let url = workflowRuns.first(where: { ["failure", "timed_out", "action_required"].contains($0.conclusion) })?.htmlURL {
+            return url
+        }
+        if let url = workflowRuns.first(where: { ["queued", "in_progress", "waiting", "requested", "pending"].contains($0.status) })?.htmlURL {
+            return url
+        }
+        if let url = workflowRuns.first?.htmlURL {
+            return url
+        }
+        // Runs are now fetched lazily, so fall back to the batched checks until the row is expanded.
+        if let url = checks?.first(where: { ["failure", "timed_out", "action_required"].contains($0.conclusion) })?.url {
+            return url
+        }
+        if let url = checks?.first(where: { ["queued", "in_progress", "waiting", "requested", "pending"].contains($0.status) })?.url {
+            return url
+        }
+        return checks?.first?.url
     }
 
     init(
@@ -379,7 +492,8 @@ struct TrackedPullRequest: Codable, Equatable, Identifiable {
         isMerged: Bool = false,
         workflowRuns: [GitHubWorkflowRun],
         unresolvedReviewThreadCount: Int = 0,
-        latestReviewCommentAt: Date? = nil
+        latestReviewCommentAt: Date? = nil,
+        checks: [GitHubCheck]? = nil
     ) {
         self.id = id
         self.repository = repository
@@ -395,6 +509,7 @@ struct TrackedPullRequest: Codable, Equatable, Identifiable {
         self.workflowRuns = workflowRuns
         self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
         self.latestReviewCommentAt = latestReviewCommentAt
+        self.checks = checks
     }
 
     enum CodingKeys: String, CodingKey {
@@ -412,6 +527,7 @@ struct TrackedPullRequest: Codable, Equatable, Identifiable {
         case workflowRuns
         case unresolvedReviewThreadCount
         case latestReviewCommentAt
+        case checks
     }
 
     init(from decoder: Decoder) throws {
@@ -430,6 +546,7 @@ struct TrackedPullRequest: Codable, Equatable, Identifiable {
         workflowRuns = try container.decode([GitHubWorkflowRun].self, forKey: .workflowRuns)
         unresolvedReviewThreadCount = try container.decodeIfPresent(Int.self, forKey: .unresolvedReviewThreadCount) ?? 0
         latestReviewCommentAt = try container.decodeIfPresent(Date.self, forKey: .latestReviewCommentAt)
+        checks = try container.decodeIfPresent([GitHubCheck].self, forKey: .checks)
     }
 }
 

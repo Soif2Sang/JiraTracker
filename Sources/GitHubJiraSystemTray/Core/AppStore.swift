@@ -45,10 +45,6 @@ final class AppStore: ObservableObject {
         let warning: String?
     }
 
-    private struct PullRequestFetchResult {
-        let pullRequest: TrackedPullRequest?
-        let failed: Bool
-    }
     @Published private(set) var pullRequests: [TrackedPullRequest] = []
     @Published private(set) var mergedPullRequests: [TrackedPullRequest] = []
     @Published private(set) var summary = StatusSummary.empty
@@ -303,31 +299,42 @@ final class AppStore: ObservableObject {
             expandedPullRequests.remove(pullRequestID)
         } else {
             expandedPullRequests.insert(pullRequestID)
-            loadJobs(for: pullRequestID)
+            loadDetails(for: pullRequestID)
         }
     }
 
-    func loadJobs(for pullRequestID: String) {
+    /// Loads the CI detail (workflow runs then their jobs) on demand, when a row is expanded.
+    func loadDetails(for pullRequestID: String) {
         guard let client,
               let pullRequest = pullRequests.first(where: { $0.id == pullRequestID }),
               !loadingJobsFor.contains(pullRequestID) else { return }
 
+        let alreadyLoaded = !pullRequest.workflowRuns.isEmpty
+            && pullRequest.workflowRuns.allSatisfy { $0.jobs != nil }
+        guard !alreadyLoaded else { return }
+
+        let owner = owner(from: pullRequest.repository)
+        let repository = repositoryName(from: pullRequest.repository)
+        guard !owner.isEmpty, !repository.isEmpty else { return }
+
         loadingJobsFor.insert(pullRequestID)
         Task { [weak self] in
             guard let self else { return }
-            var runs = pullRequest.workflowRuns
+            defer { self.loadingJobsFor.remove(pullRequestID) }
             do {
+                var runs = try await client.workflowRuns(
+                    owner: owner,
+                    repository: repository,
+                    headSHA: pullRequest.headSHA
+                )
                 for index in runs.indices {
                     runs[index].jobs = try await client.jobs(
-                        owner: self.owner(from: pullRequest.repository),
-                        repository: self.repositoryName(from: pullRequest.repository),
+                        owner: owner,
+                        repository: repository,
                         runID: runs[index].id
                     )
                 }
-                guard let currentIndex = self.pullRequests.firstIndex(where: { $0.id == pullRequestID }) else {
-                    self.loadingJobsFor.remove(pullRequestID)
-                    return
-                }
+                guard let currentIndex = self.pullRequests.firstIndex(where: { $0.id == pullRequestID }) else { return }
                 self.pullRequests[currentIndex].workflowRuns = runs
                 self.recalculateSummary()
                 self.cache.save(CacheSnapshot(
@@ -338,7 +345,6 @@ final class AppStore: ObservableObject {
             } catch {
                 self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
-            self.loadingJobsFor.remove(pullRequestID)
         }
     }
 
@@ -445,82 +451,56 @@ final class AppStore: ObservableObject {
     }
 
     private func loadPullRequests(
-        _ discovered: [GitHubSearchPullRequest],
+        _ discovered: [GitHubDiscoveredPullRequest],
         client: GitHubClient
     ) async -> RefreshResult {
         let oldByID = Dictionary(uniqueKeysWithValues: pullRequests.map { ($0.id, $0) })
-        let fetchResults = await withTaskGroup(of: PullRequestFetchResult.self) { group in
-            for item in discovered {
-                group.addTask {
-                    guard let fullName = item.repositoryFullName else {
-                        return PullRequestFetchResult(pullRequest: nil, failed: false)
-                    }
-                    let components = fullName.split(separator: "/", maxSplits: 1).map(String.init)
-                    guard components.count == 2 else {
-                        return PullRequestFetchResult(pullRequest: nil, failed: false)
-                    }
-                    do {
-                        let details = try await client.pullRequest(
-                            owner: components[0],
-                            repository: components[1],
-                            number: item.number
-                        )
-                        let runs = try await client.workflowRuns(
-                            owner: components[0],
-                            repository: components[1],
-                            headSHA: details.head.sha
-                        )
-                        let previousRuns = oldByID[item.identity]?.workflowRuns ?? []
-                        let reviewSummary = try? await client.reviewThreadSummary(
-                            owner: components[0],
-                            repository: components[1],
-                            number: details.number
-                        )
-                        let runsWithCachedJobs = runs.map { run in
-                            var run = run
-                            run.jobs = previousRuns.first(where: { $0.id == run.id })?.jobs
-                            return run
-                        }
-                        return PullRequestFetchResult(
-                            pullRequest: TrackedPullRequest(
-                                id: item.identity,
-                                repository: fullName,
-                                number: details.number,
-                                title: details.title,
-                                url: details.htmlURL,
-                                branch: details.head.ref,
-                                headSHA: details.head.sha,
-                                isDraft: details.draft ?? false,
-                                body: details.body,
-                                updatedAt: details.updatedAt,
-                                isMerged: false,
-                                workflowRuns: runsWithCachedJobs,
-                                unresolvedReviewThreadCount: reviewSummary?.unresolvedCount
-                                    ?? oldByID[item.identity]?.unresolvedReviewThreadCount
-                                    ?? 0,
-                                latestReviewCommentAt: reviewSummary?.latestCommentAt
-                                    ?? oldByID[item.identity]?.latestReviewCommentAt
-                            ),
-                            failed: false
-                        )
-                    } catch {
-                        return PullRequestFetchResult(
-                            pullRequest: oldByID[item.identity],
-                            failed: true
-                        )
-                    }
-                }
-            }
 
-            var results: [PullRequestFetchResult] = []
-            for await result in group {
-                results.append(result)
-            }
-            return results
+        // Search already returned title/url/body/head, so a single batched GraphQL call
+        // is enough for review threads and CI checks — no per-PR REST call.
+        let refs: [GitHubPullRequestRef] = discovered.compactMap { item in
+            let components = item.repositoryFullName.split(separator: "/", maxSplits: 1).map(String.init)
+            guard components.count == 2 else { return nil }
+            return GitHubPullRequestRef(
+                identity: item.identity,
+                owner: components[0],
+                repository: components[1],
+                number: item.number,
+                headSHA: item.headRefOid
+            )
         }
+        let summaries = (try? await client.pullRequestSummaries(refs)) ?? [:]
 
-        let result = fetchResults.compactMap(\.pullRequest)
-        let failedCount = fetchResults.filter(\.failed).count
+        var result: [TrackedPullRequest] = []
+        var failedCount = 0
+
+        for item in discovered {
+            let previous = oldByID[item.identity]
+            guard let summary = summaries[item.identity] else {
+                failedCount += 1
+                if let previous { result.append(previous) }
+                continue
+            }
+            // Keep cached runs/jobs for the detail view only while the head commit is unchanged.
+            let cachedRuns = previous?.headSHA == item.headRefOid ? (previous?.workflowRuns ?? []) : []
+            result.append(TrackedPullRequest(
+                id: item.identity,
+                repository: item.repositoryFullName,
+                number: item.number,
+                title: item.title,
+                url: item.url,
+                branch: item.headRefName,
+                headSHA: item.headRefOid,
+                isDraft: item.isDraft,
+                body: item.body,
+                updatedAt: item.updatedAt,
+                isMerged: false,
+                workflowRuns: cachedRuns,
+                unresolvedReviewThreadCount: summary.unresolvedReviewThreadCount,
+                latestReviewCommentAt: summary.latestReviewCommentAt,
+                checks: summary.checks
+            ))
+        }
 
         return RefreshResult(
             pullRequests: result,
@@ -528,18 +508,17 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func makeMergedPullRequests(_ discovered: [GitHubSearchPullRequest]) -> [TrackedPullRequest] {
-        discovered.compactMap { item in
-            guard let fullName = item.repositoryFullName else { return nil }
-            return TrackedPullRequest(
+    private func makeMergedPullRequests(_ discovered: [GitHubDiscoveredPullRequest]) -> [TrackedPullRequest] {
+        discovered.map { item in
+            TrackedPullRequest(
                 id: item.identity,
-                repository: fullName,
+                repository: item.repositoryFullName,
                 number: item.number,
                 title: item.title,
-                url: item.htmlURL,
-                branch: "",
-                headSHA: "",
-                isDraft: false,
+                url: item.url,
+                branch: item.headRefName,
+                headSHA: item.headRefOid,
+                isDraft: item.isDraft,
                 body: item.body,
                 updatedAt: item.mergedAt ?? item.updatedAt,
                 isMerged: true,
@@ -552,37 +531,42 @@ final class AppStore: ObservableObject {
         for pullRequests: [TrackedPullRequest],
         client: GitHubClient
     ) async -> RefreshResult {
+        let refs: [GitHubPullRequestRef] = pullRequests.compactMap { pullRequest in
+            let components = pullRequest.repository.split(separator: "/", maxSplits: 1).map(String.init)
+            guard components.count == 2 else { return nil }
+            return GitHubPullRequestRef(
+                identity: pullRequest.id,
+                owner: components[0],
+                repository: components[1],
+                number: pullRequest.number,
+                headSHA: pullRequest.headSHA
+            )
+        }
+
+        let summaries: [String: GitHubPullRequestSummary]
+        do {
+            summaries = try await client.pullRequestSummaries(refs)
+        } catch {
+            return RefreshResult(
+                pullRequests: pullRequests,
+                warning: "Les statuts CI n'ont pas pu être actualisés. Les dernières données disponibles sont conservées."
+            )
+        }
+
         var result: [TrackedPullRequest] = []
         var failedCount = 0
 
         for pullRequest in pullRequests {
-            let components = pullRequest.repository.split(separator: "/", maxSplits: 1).map(String.init)
-            guard components.count == 2 else { continue }
-            do {
-                var updated = pullRequest
-                let runs = try await client.workflowRuns(
-                    owner: components[0],
-                    repository: components[1],
-                    headSHA: pullRequest.headSHA
-                )
-                updated.workflowRuns = runs.map { run in
-                    var run = run
-                    run.jobs = pullRequest.workflowRuns.first(where: { $0.id == run.id })?.jobs
-                    return run
-                }
-                if let reviewSummary = try? await client.reviewThreadSummary(
-                    owner: components[0],
-                    repository: components[1],
-                    number: pullRequest.number
-                ) {
-                    updated.unresolvedReviewThreadCount = reviewSummary.unresolvedCount
-                    updated.latestReviewCommentAt = reviewSummary.latestCommentAt
-                }
-                result.append(updated)
-            } catch {
+            guard let summary = summaries[pullRequest.id] else {
                 failedCount += 1
                 result.append(pullRequest)
+                continue
             }
+            var updated = pullRequest
+            updated.unresolvedReviewThreadCount = summary.unresolvedReviewThreadCount
+            updated.latestReviewCommentAt = summary.latestReviewCommentAt
+            updated.checks = summary.checks
+            result.append(updated)
         }
 
         return RefreshResult(
