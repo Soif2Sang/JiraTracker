@@ -225,6 +225,7 @@ private struct DashboardWorkItemRow: View {
     @ObservedObject var jiraStore: JiraStore
     @EnvironmentObject private var theme: ThemeStore
     @State private var isExpanded = false
+    @State private var showSecondaryPRs = false
 
     private var issue: JiraIssue? { if case let .issue(issue) = item { return issue }; return nil }
     private var pullRequests: [TrackedPullRequest] {
@@ -239,6 +240,24 @@ private struct DashboardWorkItemRow: View {
     private var destination: URL { issue.map { jiraStore.webURL(for: $0) } ?? primaryPR!.url }
     private var comments: Int { pullRequests.reduce(0) { $0 + $1.unresolvedReviewThreadCount } }
     private var updatedAt: Date { primaryPR?.updatedAt ?? issue?.fields.updatedDate ?? Date() }
+
+    private var mergedAccent: Color { Color(red: 0.68, green: 0.42, blue: 0.96) }
+    private var branchAccent: Color { Color(red: 0.28, green: 0.68, blue: 1) }
+
+    /// Prototype selector for the multiple-PR case, driven by an env var in demo mode.
+    private var multiPrototype: Int {
+        Int(ProcessInfo.processInfo.environment["JIRA_TRACKER_MULTIPR_PROTO"] ?? "") ?? 1
+    }
+
+    private var hasMultiplePRs: Bool { pullRequests.count > 1 }
+
+    /// Worst CI status across the linked pull requests (failure > running > cancelled > unknown > success).
+    private var aggregateCIStatus: CIStatus {
+        let priority: [CIStatus: Int] = [.failure: 0, .running: 1, .cancelled: 2, .unknown: 3, .success: 4]
+        return pullRequests
+            .map(\.ciStatus)
+            .min { (priority[$0] ?? 9) < (priority[$1] ?? 9) } ?? .unknown
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -258,35 +277,7 @@ private struct DashboardWorkItemRow: View {
                         .foregroundStyle(Color.primary)
                         .lineLimit(1)
                         .buttonStyle(.plain)
-                    HStack(spacing: 10) {
-                        if let pr = primaryPR {
-                            Link(destination: pr.url) {
-                                HStack(spacing: 4) {
-                                    BrandIcon(asset: .github, size: 10, color: Color.primary.opacity(0.58))
-                                    Text(pr.repository)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            if pr.isMerged {
-                                Link(destination: pr.url) {
-                                    Label("Mergée", systemImage: "arrow.triangle.merge")
-                                        .foregroundStyle(Color(red: 0.68, green: 0.42, blue: 0.96))
-                                }
-                                .buttonStyle(.plain)
-                            } else if !pr.branch.isEmpty {
-                                Link(destination: pr.url) {
-                                    Label(pr.branch, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                                        .foregroundStyle(Color(red: 0.28, green: 0.68, blue: 1).opacity(0.9))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        } else {
-                            Label("Aucune PR liée", systemImage: "link.badge.plus")
-                        }
-                    }
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.primary.opacity(0.58))
-                    .lineLimit(1)
+                    prMetaSection
                 }
                 Spacer(minLength: 8)
                 ciControl
@@ -298,7 +289,8 @@ private struct DashboardWorkItemRow: View {
                 detailsControl
             }
             .padding(.horizontal, 10)
-            .frame(height: 70)
+            .frame(height: hasMultiplePRs ? nil : 70)
+            .padding(.vertical, hasMultiplePRs ? 9 : 0)
 
             if isExpanded, let pullRequest = primaryPR, !pullRequest.isMerged {
                 Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
@@ -309,6 +301,146 @@ private struct DashboardWorkItemRow: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
+        }
+    }
+
+    @ViewBuilder private var prMetaSection: some View {
+        if pullRequests.isEmpty {
+            Label("Aucune PR liée", systemImage: "link.badge.plus")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.primary.opacity(0.58))
+                .lineLimit(1)
+        } else if pullRequests.count == 1 {
+            prMetaLine(pullRequests[0])
+        } else {
+            switch multiPrototype {
+            case 2: prototypeChips
+            case 3: prototypePrimaryPlus
+            default: prototypeStack
+            }
+        }
+    }
+
+    /// Prototype 1 : une ligne méta par PR liée, l'en-tête du ticket reste identique.
+    private var prototypeStack: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(pullRequests) { pr in
+                HStack(spacing: 8) {
+                    Image(systemName: ciSymbol(for: pr.ciStatus))
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(ciColor(for: pr.ciStatus))
+                    prMetaLine(pr)
+                }
+            }
+        }
+    }
+
+    /// Prototype 2 : chips de dépôts sur une seule ligne + CI agrégé à droite.
+    private var prototypeChips: some View {
+        HStack(spacing: 6) {
+            ForEach(pullRequests) { pr in
+                Link(destination: pr.url) {
+                    HStack(spacing: 4) {
+                        BrandIcon(asset: .github, size: 10, color: Color.primary.opacity(0.58))
+                        Text(shortRepository(pr.repository))
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.primary.opacity(0.7))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(pr.branch)
+            }
+            if let primaryPR, !primaryPR.isMerged, !primaryPR.branch.isEmpty {
+                Link(destination: primaryPR.url) {
+                    Label(primaryPR.branch, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                        .foregroundStyle(branchAccent.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+                .lineLimit(1)
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(Color.primary.opacity(0.58))
+    }
+
+    /// Prototype 3 : PR principale comme aujourd'hui, avec une chip « +N » pour révéler les autres.
+    private var prototypePrimaryPlus: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                prMetaLine(pullRequests[0])
+                Button {
+                    showSecondaryPRs.toggle()
+                } label: {
+                    Text("+\(pullRequests.count - 1)")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.primary.opacity(0.72))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.primary.opacity(0.1), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Afficher les autres PR")
+            }
+            if showSecondaryPRs {
+                ForEach(pullRequests.dropFirst()) { pr in
+                    prMetaLine(pr)
+                }
+            }
+        }
+    }
+
+    private func prMetaLine(_ pr: TrackedPullRequest) -> some View {
+        HStack(spacing: 10) {
+            Link(destination: pr.url) {
+                HStack(spacing: 4) {
+                    BrandIcon(asset: .github, size: 10, color: Color.primary.opacity(0.58))
+                    Text(pr.repository)
+                }
+            }
+            .buttonStyle(.plain)
+            if pr.isMerged {
+                Link(destination: pr.url) {
+                    Label("Mergée", systemImage: "arrow.triangle.merge")
+                        .foregroundStyle(mergedAccent)
+                }
+                .buttonStyle(.plain)
+            } else if !pr.branch.isEmpty {
+                Link(destination: pr.url) {
+                    Label(pr.branch, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                        .foregroundStyle(branchAccent.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(Color.primary.opacity(0.58))
+        .lineLimit(1)
+    }
+
+    private func shortRepository(_ fullName: String) -> String {
+        fullName.split(separator: "/").last.map(String.init) ?? fullName
+    }
+
+    private func ciSymbol(for status: CIStatus) -> String {
+        switch status {
+        case .failure: return "xmark.circle.fill"
+        case .running: return "clock.fill"
+        case .cancelled: return "slash.circle.fill"
+        case .success: return "checkmark.circle.fill"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    private func ciColor(for status: CIStatus) -> Color {
+        switch status {
+        case .failure: return .red
+        case .running: return .orange
+        case .cancelled: return .orange
+        case .success: return Color(red: 0.31, green: 0.81, blue: 0.43)
+        case .unknown: return Color.primary.opacity(0.3)
         }
     }
 
@@ -364,7 +496,7 @@ private struct DashboardWorkItemRow: View {
 
     private var ciIndicator: some View {
         CIIndicator(
-            status: primaryPR?.ciStatus ?? .unknown,
+            status: hasMultiplePRs && multiPrototype == 2 ? aggregateCIStatus : (primaryPR?.ciStatus ?? .unknown),
             isMerged: primaryPR?.isMerged == true,
             hasPullRequest: primaryPR != nil
         )

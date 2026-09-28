@@ -163,15 +163,18 @@ final class AppStore: ObservableObject {
             title: String,
             branch: String,
             ticket: String,
+            repository: String,
             offset: TimeInterval,
             merged: Bool
         )] = [
-            (.failure, 5, "Analytics onboarding", "fix/onboarding-analytics", "1250", -720, false),
-            (.running, 0, "API error handling", "feature/error-handling", "1260", -3_600, false),
-            (.success, 1, "Billing service refactor", "refactor/billing-service", "1242", -2_700, false),
-            (.success, 2, "Workspace settings UI", "feature/workspace-settings", "1234", -120, false),
-            (.success, 3, "Improve logging", "chore/logging", "1287", -7_200, true),
-            (.success, 0, "Release 2.4 rollout", "release/2.4", "1290", -9_000, true)
+            (.failure, 5, "Analytics onboarding", "fix/onboarding-analytics", "1250", "acme/platform", -720, false),
+            (.running, 0, "API error handling", "feature/error-handling", "1260", "acme/platform", -3_600, false),
+            (.success, 1, "Billing service refactor", "refactor/billing-service", "1242", "acme/billing", -2_700, false),
+            (.running, 2, "Billing contract update", "feat/billing-contract", "1242", "acme/platform", -1_500, false),
+            (.success, 2, "Workspace settings UI", "feature/workspace-settings", "1234", "acme/platform", -120, false),
+            (.failure, 1, "Workspace settings E2E", "test/workspace-settings-e2e", "1234", "acme/k8s-apps", -60, false),
+            (.success, 3, "Improve logging", "chore/logging", "1287", "acme/platform", -7_200, true),
+            (.success, 0, "Release 2.4 rollout", "release/2.4", "1290", "acme/platform", -9_000, true)
         ]
         pullRequests = fixtures.enumerated().map { index, fixture in
             let run = GitHubWorkflowRun(
@@ -187,11 +190,11 @@ final class AppStore: ObservableObject {
                 jobs: nil
             )
             return TrackedPullRequest(
-                id: "acme/platform#\(index + 101)",
-                repository: fixture.ticket == "1242" ? "acme/billing" : "acme/platform",
+                id: "\(fixture.repository)#\(index + 101)",
+                repository: fixture.repository,
                 number: index + 101,
                 title: fixture.title,
-                url: URL(string: "https://github.com/acme/platform/pull/\(index + 101)")!,
+                url: URL(string: "https://github.com/\(fixture.repository)/pull/\(index + 101)")!,
                 branch: fixture.branch,
                 headSHA: "demo-sha-\(index)",
                 isDraft: false,
