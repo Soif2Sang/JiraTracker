@@ -385,12 +385,18 @@ private struct DashboardWorkItemRow: View {
     }
 
     private var commentBadge: some View {
-        Label("\(comments)", systemImage: "ellipsis.message.fill")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Color.primary.opacity(0.72))
+        let isActive = comments > 0
+        return Label("\(comments)", systemImage: "bubble.left.fill")
+            .font(.system(size: 10, weight: isActive ? .semibold : .medium))
+            .foregroundStyle(isActive ? Color.white : Color.primary.opacity(0.72))
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
-            .background(Color.primary.opacity(theme.selection == .white ? 0.12 : 0.07), in: Capsule())
+            .background(
+                isActive
+                    ? Color(red: 0.68, green: 0.42, blue: 0.96)
+                    : Color.primary.opacity(theme.selection == .white ? 0.12 : 0.07),
+                in: Capsule()
+            )
     }
 
     @ViewBuilder private var jiraStatusChip: some View {
